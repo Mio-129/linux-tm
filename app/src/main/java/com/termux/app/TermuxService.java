@@ -5,8 +5,10 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.net.wifi.WifiManager;
 import android.os.Binder;
@@ -20,6 +22,7 @@ import androidx.annotation.Nullable;
 
 import com.termux.R;
 import com.termux.app.event.SystemEventReceiver;
+import com.termux.app.mio.MioCommandManager;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -89,6 +92,19 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private final TermuxTerminalSessionServiceClient mTermuxTerminalSessionServiceClient = new TermuxTerminalSessionServiceClient(this);
 
     /**
+     * The broadcast receiver for the `swset` and `so` commands of this fork, which are sent by the
+     * scripts installed to `$PREFIX/bin` via `termux-am broadcast`.
+     */
+    private final BroadcastReceiver mMioCommandReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            Logger.logDebug(LOG_TAG, "MioCommandReceiver received intent with action \"" + intent.getAction() + "\"");
+            MioCommandManager.getInstance(TermuxService.this).handleServiceIntent(intent);
+        }
+    };
+
+    /**
      * Termux app shared properties manager, loaded from termux.properties
      */
     private TermuxAppSharedProperties mProperties;
@@ -120,6 +136,37 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         runStartForeground();
 
         SystemEventReceiver.registerPackageUpdateEvents(this);
+
+        registerMioCommandReceiver();
+    }
+
+    /** Register the receiver for the `swset` and `so` command broadcasts. */
+    private void registerMioCommandReceiver() {
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(MioCommandManager.ACTION_SET_WALLPAPER);
+        intentFilter.addAction(MioCommandManager.ACTION_SET_AUDIO);
+        intentFilter.addAction(MioCommandManager.ACTION_CLEAR_WALLPAPER);
+        intentFilter.addAction(MioCommandManager.ACTION_STATUS);
+        intentFilter.addAction(MioCommandManager.ACTION_HELP);
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(mMioCommandReceiver, intentFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(mMioCommandReceiver, intentFilter);
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to register MioCommandReceiver", e);
+        }
+    }
+
+    /** Unregister the receiver for the `swset` and `so` command broadcasts. */
+    private void unregisterMioCommandReceiver() {
+        try {
+            unregisterReceiver(mMioCommandReceiver);
+        } catch (Exception e) {
+            // Ignore, the receiver may not have been registered
+        }
     }
 
     @SuppressLint("Wakelock")
@@ -155,7 +202,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                     actionServiceExecute(intent);
                     break;
                 default:
-                    Logger.logError(LOG_TAG, "Invalid action: \"" + action + "\"");
+                    // Check if the intent is for the custom commands of this fork, like `swset`
+                    // and `so`, which send broadcasts to the app
+                    if (!MioCommandManager.getInstance(this).handleServiceIntent(intent))
+                        Logger.logError(LOG_TAG, "Invalid action: \"" + action + "\"");
                     break;
             }
         }
@@ -178,6 +228,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         TermuxShellManager.onAppExit(this);
 
         SystemEventReceiver.unregisterPackageUpdateEvents(this);
+
+        unregisterMioCommandReceiver();
 
         runStopForeground();
     }

@@ -28,6 +28,8 @@ import android.widget.Toast;
 
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
+import com.termux.app.mio.MioCommandManager;
+import com.termux.app.mio.MioMediaBackgroundView;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
@@ -124,6 +126,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     View mTermuxActivityBottomSpaceView;
 
     /**
+     * The view that shows the image or video set with the `swset` command behind the terminal.
+     */
+    MioMediaBackgroundView mMioMediaBackgroundView;
+
+    /**
      * The terminal extra keys view.
      */
     ExtraKeysView mExtraKeysView;
@@ -188,6 +195,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_HELP_ID = 7;
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
+    private static final int CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID = 12;
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
@@ -229,6 +237,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mTermuxActivityRootView = findViewById(R.id.activity_termux_root_view);
         mTermuxActivityRootView.setActivity(this);
         mTermuxActivityBottomSpaceView = findViewById(R.id.activity_termux_bottom_space_view);
+        mMioMediaBackgroundView = findViewById(R.id.mio_media_background_view);
         mTermuxActivityRootView.setOnApplyWindowInsetsListener(new TermuxActivityRootView.WindowInsetsListener());
 
         View content = findViewById(android.R.id.content);
@@ -242,6 +251,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         setTermuxTerminalViewAndClients();
+
+        setMioMediaBackgroundView();
 
         setTerminalToolbarView(savedInstanceState);
 
@@ -274,9 +285,29 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             return;
         }
 
+        // Handle the intents of the `swset` and `so` commands, which may have started the activity
+        handleMioCommandIntent(getIntent());
+
         // Send the {@link TermuxConstants#BROADCAST_TERMUX_OPENED} broadcast to notify apps that Termux
         // app has been opened.
         TermuxUtils.sendTermuxOpenedBroadcast(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        Logger.logVerbose(LOG_TAG, "onNewIntent: " + IntentUtils.getIntentString(intent));
+        handleMioCommandIntent(intent);
+    }
+
+    /**
+     * Handle the intents sent by the `swset` and `so` commands, which are normally handled by the
+     * {@link TermuxService}, but may also be sent to this activity with
+     * {@link com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_SERVICE#ACTION_SERVICE_EXECUTE}.
+     */
+    private void handleMioCommandIntent(@Nullable Intent intent) {
+        if (intent == null || !MioCommandManager.isMioAction(intent.getAction())) return;
+        MioCommandManager.getInstance(this).handleIntent(intent);
     }
 
     @Override
@@ -497,6 +528,24 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxTerminalSessionActivityClient.onCreate();
     }
 
+    /**
+     * Setup the view that shows the media set with the `swset` command behind the terminal. The
+     * terminal is rendered transparently only while a media is set, otherwise it keeps painting the
+     * background color of the color scheme (black for the default scheme).
+     */
+    private void setMioMediaBackgroundView() {
+        if (mMioMediaBackgroundView == null || mTerminalView == null) return;
+
+        mMioMediaBackgroundView.setMediaStateListener(hasMedia -> {
+            mTerminalView.setBackgroundTransparent(hasMedia);
+            mTerminalView.setBackgroundColor(hasMedia ? android.graphics.Color.TRANSPARENT : android.graphics.Color.BLACK);
+        });
+
+        // Apply the media that was set before the activity was created or recreated, like after a
+        // configuration change or when the activity was started after the command was run
+        MioCommandManager.getInstance(this).restoreState();
+    }
+
     private void setTermuxSessionsListView() {
         ListView termuxSessionsListView = findViewById(R.id.terminal_sessions_list);
         mTermuxSessionListViewController = new TermuxSessionsListViewController(this, mTermuxService.getTermuxSessions());
@@ -648,6 +697,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
         menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
+        menu.add(Menu.NONE, CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID, Menu.NONE, R.string.action_mio_background_media);
     }
 
     /** Hook system menu to show context menu instead. */
@@ -698,6 +748,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_REPORT_ID:
                 mTermuxTerminalViewClient.reportIssueFromTranscript();
                 return true;
+            case CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID:
+                showMioBackgroundMediaDialog();
+                return true;
             default:
                 return super.onContextItemSelected(item);
         }
@@ -732,6 +785,19 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             if (mTermuxTerminalSessionActivityClient != null)
                 mTermuxTerminalSessionActivityClient.onResetTerminalSession();
         }
+    }
+
+    /** Show the dialog with the info and actions of the `swset` and `so` commands of this fork. */
+    private void showMioBackgroundMediaDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle(R.string.mio_background_media_dialog_title)
+            .setMessage(R.string.mio_background_media_dialog_message)
+            .setPositiveButton(R.string.mio_background_media_dialog_clear, (dialog, which) -> {
+                dialog.dismiss();
+                MioCommandManager.getInstance(this).clearWallpaper();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     private void showStylingDialog() {
@@ -879,6 +945,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public TerminalView getTerminalView() {
         return mTerminalView;
+    }
+
+    /**
+     * @return Returns the view that shows the image or video set with the `swset` command behind
+     * the terminal, may be {@code null} if the activity layout does not contain it.
+     */
+    @Nullable
+    public MioMediaBackgroundView getMioMediaBackgroundView() {
+        return mMioMediaBackgroundView;
     }
 
     public TermuxTerminalViewClient getTermuxTerminalViewClient() {

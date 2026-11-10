@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Context;
 
 import com.termux.BuildConfig;
+import com.termux.app.mio.MioBootstrap;
 import com.termux.shared.errors.Error;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxBootstrap;
@@ -71,6 +72,10 @@ public class TermuxApplication extends Application {
         if (isTermuxFilesDirectoryAccessible) {
             TermuxShellEnvironment.writeEnvironmentToFile(this);
         }
+
+        // Install the custom `swset` and `so` commands to $PREFIX/bin, if the prefix exists. This is
+        // also called after the bootstrap is extracted, see `TermuxInstaller`
+        MioBootstrap.install(this);
     }
 
     public static void setLogConfig(Context context) {
