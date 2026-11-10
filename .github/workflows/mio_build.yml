@@ -11,6 +11,10 @@ on:
       - master
   workflow_dispatch:
 
+# Needed to create/update the release with the debug APKs
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -54,6 +58,7 @@ jobs:
       # on successful pushes, so that the APKs can be downloaded from the releases page as well
       - name: Publish debug APKs to a release
         if: github.event_name == 'push' && success()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
