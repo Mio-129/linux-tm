@@ -49,3 +49,18 @@ jobs:
           name: termux-app-${{ matrix.package_variant }}-debug-apks
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
+
+      # Also attach the APKs to a release tagged with the branch name (like `arena/04a67b33-linux-tm`)
+      # on successful pushes, so that the APKs can be downloaded from the releases page as well
+      - name: Publish debug APKs to a release
+        if: github.event_name == 'push' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="debug-$(printf '%s' "${{ github.ref_name }}" | tr '/' '-')"
+          TITLE="Debug APKs (${{ github.ref_name }} @ ${{ github.sha }})"
+          NOTES="Debug APKs built from commit ${{ github.sha }} of branch ${{ github.ref_name }}."
+          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TITLE" --notes "$NOTES" --target "${{ github.sha }}"
+          gh release upload "$TAG" app/build/outputs/apk/debug/*.apk --repo "${{ github.repository }}" --clobber
+          gh release edit "$TAG" --repo "${{ github.repository }}" --title "$TITLE" --notes "$NOTES"
