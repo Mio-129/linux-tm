@@ -23,15 +23,24 @@
             android:layout_above="@+id/terminal_toolbar_view_pager"
             android:layout_height="match_parent">
 
-            <com.termux.view.TerminalView
-                android:id="@+id/terminal_view"
+            <com.termux.app.mio.MioMediaBackgroundView
+                android:id="@+id/mio_media_background_view"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:defaultFocusHighlightEnabled="false"
-                android:focusableInTouchMode="true"
-                android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
-                android:scrollbars="vertical"
-                tools:ignore="UnusedAttribute" />
+                android:layout_height="match_parent">
+
+                <!-- The background media (image or video) set with the swset command is shown
+                     behind the terminal. The terminal is drawn transparently on top of it, and the
+                     black background of this view is shown if no media is set. -->
+                <com.termux.view.TerminalView
+                    android:id="@+id/terminal_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:defaultFocusHighlightEnabled="false"
+                    android:focusableInTouchMode="true"
+                    android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
+                    android:scrollbars="vertical"
+                    tools:ignore="UnusedAttribute" />
+            </com.termux.app.mio.MioMediaBackgroundView>
 
             <LinearLayout
                 android:id="@+id/left_drawer"

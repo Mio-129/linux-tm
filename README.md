@@ -22,6 +22,7 @@ Quick how-to about Termux package management is available at [Package Management
 ***
 
 ## Contents
+- [linux-tm fork: custom commands and kur.sh](#linux-tm-fork-custom-commands-and-kursh)
 - [Termux App and Plugins](#termux-app-and-plugins)
 - [Installation](#installation)
 - [Uninstallation](#uninstallation)
@@ -33,6 +34,99 @@ Quick how-to about Termux package management is available at [Package Management
 ##
 
 
+
+## linux-tm fork: custom commands and kur.sh
+
+This repo (`Mio-129/linux-tm`) is a fork of Termux with a custom background media feature and a
+one shot installer/build script.
+
+### kur.sh (kur.s)
+
+`kur.sh` in the repo root is the setup script. It installs the packages required to build the app
+inside Termux, clones the repo (if it is not run from the repo), builds the debug APK and prints the
+exact commands for building and installing:
+
+```sh
+bash kur.sh              # install packages, clone repo, build APK
+bash kur.sh --deps-only  # only install the missing packages
+bash kur.sh --no-build   # install packages and clone, do not build
+bash kur.sh --help
+```
+
+It installs `git`, `openssl`, `curl`, `unzip`, `tar`, `coreutils`, `openjdk-17` and the Android SDK
+packages (`android-sdk`, `platform-tools`, `aapt`, `apksigner`, `gradle`, `ndk-sysroot`) and then
+runs `./gradlew assembleDebug` with `TERMUX_PACKAGE_VARIANT` set.
+
+### build.sh
+
+Where the APK is built, APK files end up in `app/build/outputs/apk/debug/`.
+
+```sh
+bash build.sh            # build debug APKs for all architectures
+bash build.sh --install  # build and install the APK on the device (via termux-open)
+bash build.sh --clean    # clean before building
+```
+
+Building manually, without the scripts:
+
+```sh
+pkg install openjdk-17 git
+export TERMUX_PACKAGE_VARIANT=apt-android-7
+./gradlew assembleDebug
+```
+
+### swset - image/video behind the terminal
+
+`swset` puts an image or a video **behind** the terminal, the text is rendered on top of it and the
+black background stays black where the media does not cover it (center crop, no letterboxing of the
+media itself).
+
+```sh
+cd ~/resimler
+swset foto.png        # set an image as the background
+swset video.mp4       # set a video as the background (muted)
+swset                 # set the first image/video found in the current directory
+swset image           # set the first image found
+swset video           # set the first video found
+swset off             # clear the background (back to plain black)
+swset status          # show the current background media
+swset --ses video.mp4 # set the video with its audio enabled
+```
+
+The scripts pass the directory they were run from to the app, so `swset` finds the media files in
+any directory, including its sub directories, and falls back to `~` (the Termux home directory).
+
+### so - audio of the video
+
+The video set with `swset` is **muted by default**. Its audio is only played when `so` is run, so the
+terminal can be used quietly and the sound can be enabled later.
+
+```sh
+so             # enable the audio of the background video
+so off         # mute it again (video keeps playing silently)
+so stop        # stop the audio and clear the background
+so video.mp4   # set this video and enable its audio
+so status      # show the current state
+```
+
+If the video itself has no audio track, the audio of a file with the same name is played when `so`
+is run, like `video.mp4` + `video.mp3`.
+
+### How it works
+
+- The commands are POSIX shell scripts in `app/src/main/assets/mio/`, they are copied to
+  `$PREFIX/bin/swset` and `$PREFIX/bin/so` when the app starts (and after updates and bootstrap
+  reinstalls).
+- The scripts send a broadcast (`termux-am broadcast`) to the app with the command, and the
+  arguments are passed with a `key=value` request file at `~/.termux/mio/request` so that paths with
+  spaces or unicode characters survive. If broadcasts are blocked on the device, the scripts fall
+  back to `am startservice`.
+- `TermuxService` receives the broadcast and `MioCommandManager` loads the media into
+  `MioMediaBackgroundView`, which sits behind the `TerminalView` in `activity_termux.xml`. The
+  terminal renderer skips painting the default background color while a media background is set.
+- The background media is kept while the app is running (also while only the `TermuxService` runs in
+  the background). If the app process is killed by the system, run `swset` again.
+- The background is also available from the long press menu of the terminal (**Background media**).
 
 ## Termux App and Plugins
 

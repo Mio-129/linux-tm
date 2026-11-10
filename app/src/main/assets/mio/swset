@@ -1,0 +1,158 @@
+#!/data/data/com.termux/files/usr/bin/sh
+#
+# swset - Fotoğraf veya videoyu terminalin arkasına koyar.
+#
+# Kullanım:
+#   swset <dosya>       Fotoğraf veya videoyu arka plana koyar, örnek: swset foto.png
+#   swset               Bulunduğun klasördeki (ve alt klasörlerdeki) ilk fotoğraf/videoyu koyar
+#   swset image         İlk fotoğrafı arka plana koyar
+#   swset video         İlk videoyu arka plana koyar
+#   swset off           Arka planı temizler (siyah arka plan geri gelir)
+#   swset status        Arka plandaki medyayı gösterir
+#   swset --ses <dosya> Video ile birlikte sesini de açar
+#
+# Notlar:
+#   * Video ilk ayarlandığında sessizdir. Sesi açmak için `so` komutunu kullan.
+#   * Dosya adında boşluk varsa tırnak içine alabilirsin ama gerekmez,
+#     dosyanın tam yolu uygulamaya istek dosyası ile iletilir.
+#   * Fotoğraf/video dosyaları $HOME (Termux ana dizini) altında aranır.
+#
+# Bu betik termux-api gerektirmez, uygulamanın kendi yayın alıcısına (broadcast) komut yollar.
+
+if [ -z "${PREFIX:-}" ]; then
+    PREFIX=/data/data/com.termux/files/usr
+fi
+
+ACTION_SET="com.termux.mio.action.SET_WALLPAPER"
+ACTION_CLEAR="com.termux.mio.action.CLEAR_WALLPAPER"
+ACTION_STATUS="com.termux.mio.action.STATUS"
+
+REQUEST_DIR="$HOME/.termux/mio"
+REQUEST_FILE="$REQUEST_DIR/request"
+
+usage() {
+    cat <<EOF
+Kullanım: swset [seçenek] [dosya]
+
+  swset <dosya>        Fotoğraf/videoyu terminalin arkasına koyar.
+                       Örnek: swset foto.png / swset video.mp4
+  swset                Bulunduğun klasördeki ilk fotoğraf/videoyu koyar.
+  swset image          Bulunduğun klasördeki ilk fotoğrafı koyar.
+  swset video          Bulunduğun klasördeki ilk videoyu koyar.
+  swset off            Arka planı temizler.
+  swset status         Şu anki arka planı gösterir.
+  swset --ses <dosya>  Videoyu sesi açık şekilde koyar.
+  swset --help         Bu yardımı gösterir.
+
+Sesi açmak için:    so
+Sesi kapatmak için: so off
+EOF
+}
+
+# termux-am varsa onu kullan, yoksa /system/bin/am kullanılır.
+# Android 14+ (API 34) üzerinde `am broadcast` çalışmazsa, komut dinleyen servise
+# doğrudan startservice ile iletilir (uygulama zaten çalışıyorsa bu her zaman çalışır).
+run_am() {
+    if [ -x "$PREFIX/bin/termux-am" ]; then
+        "$PREFIX/bin/termux-am" "$@"
+    elif command -v termux-am >/dev/null 2>&1; then
+        termux-am "$@"
+    else
+        /system/bin/am "$@"
+    fi
+}
+
+send_command() {
+    if run_am broadcast "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Yedek yol: servise startservice ile gönder
+    run_am startservice -n com.termux/com.termux.app.TermuxService "$@" >/dev/null 2>&1
+}
+
+# İstek dosyasını yaz: dosya yollarındaki boşluk gibi karakterlerin
+# `am broadcast` tarafından bozulmaması için bilgiler dosyaya yazılır.
+write_request() {
+    mkdir -p "$REQUEST_DIR" 2>/dev/null
+    {
+        printf 'created=%s\n' "$(date +%s 2>/dev/null || echo 0)"
+        printf '%s\n' "$@"
+    } > "$REQUEST_FILE" 2>/dev/null
+}
+
+# Dosya yolunu mutlak yola çevir
+absolute_path() {
+    case "$1" in
+        /*) printf '%s' "$1" ;;
+        "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+        *) printf '%s/%s' "$(pwd)" "$1" ;;
+    esac
+}
+
+if [ $# -eq 0 ]; then
+    # Argüman yok: bulunduğumuz klasördeki ilk fotoğraf/video
+    write_request "command=swset" "name=" "media_type=" "audio=0" "dir=$(pwd)"
+    send_command -a "$ACTION_SET" || exit 1
+    exit 0
+fi
+
+case "$1" in
+    -h|--help|help)
+        usage
+        exit 0
+        ;;
+    off|clear|temizle|kapat)
+        send_command -a "$ACTION_CLEAR" || exit 1
+        exit 0
+        ;;
+    status|durum)
+        send_command -a "$ACTION_STATUS" || exit 1
+        exit 0
+        ;;
+    image|foto|fotograf|resim)
+        write_request "command=swset" "name=" "media_type=image" "audio=0" "dir=$(pwd)"
+        send_command -a "$ACTION_SET" || exit 1
+        exit 0
+        ;;
+    video)
+        write_request "command=swset" "name=" "media_type=video" "audio=0" "dir=$(pwd)"
+        send_command -a "$ACTION_SET" || exit 1
+        exit 0
+        ;;
+    --ses|--audio|-s)
+        shift
+        if [ $# -eq 0 ]; then
+            printf 'swset: --ses için bir dosya adı gerekli\n' >&2
+            exit 2
+        fi
+        AUDIO="1"
+        FILE="$*"
+        ;;
+    *)
+        AUDIO="0"
+        FILE="$*"
+        ;;
+esac
+
+FULL_PATH="$(absolute_path "$FILE")"
+
+if [ ! -f "$FULL_PATH" ]; then
+    # Dosya burada yoksa, uygulama $HOME ve alt klasörlerinde arayacak
+    printf 'swset: "%s" bu klasörde yok, $HOME altında aranacak\n' "$FILE" >&2
+fi
+
+write_request "command=swset" "name=$FULL_PATH" "media_type=" "audio=$AUDIO" "dir=$(pwd)"
+
+if ! send_command -a "$ACTION_SET"; then
+    printf 'swset: komut uygulamaya iletilemedi, Termux uygulaması açık mı?\n' >&2
+    exit 1
+fi
+
+printf 'swset: "%s" arka plana ayarlanıyor\n' "$FILE"
+if [ "$AUDIO" = "1" ]; then
+    printf 'swset: ses açık\n'
+else
+    printf 'swset: video sessiz, sesi açmak için: so\n'
+fi
+
+exit 0

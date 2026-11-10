@@ -221,6 +221,9 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
+                    // Install the custom `swset` and `so` commands since the prefix was wiped earlier
+                    com.termux.app.mio.MioBootstrap.install(activity);
+
                     activity.runOnUiThread(whenDone);
 
                 } catch (final Exception e) {

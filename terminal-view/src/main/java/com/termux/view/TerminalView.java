@@ -66,6 +66,11 @@ public final class TerminalView extends View {
     public static final int TERMINAL_CURSOR_BLINK_RATE_MIN = 100;
     public static final int TERMINAL_CURSOR_BLINK_RATE_MAX = 2000;
 
+    /** If the default background color of the terminal should not be painted, so that a background
+     * media (like an image or video set with the `swset` command of the linux-tm fork) behind the
+     * terminal is visible. Set with {@link #setBackgroundTransparent(boolean)}. */
+    private boolean mBackgroundTransparent;
+
     /** The top row of text to display. Ranges from -activeTranscriptRows to 0. */
     int mTopRow;
     int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
@@ -1021,7 +1026,8 @@ public final class TerminalView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         if (mEmulator == null) {
-            canvas.drawColor(0XFF000000);
+            // Do not paint over the background media set with the `swset` command, if any
+            if (!isBackgroundTransparent()) canvas.drawColor(0XFF000000);
         } else {
             // render the terminal view and highlight any selected text
             int[] sel = mDefaultSelectors;
@@ -1029,11 +1035,36 @@ public final class TerminalView extends View {
                 mTextSelectionCursorController.getSelectors(sel);
             }
 
-            mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3]);
+            // Render the terminal transparently if a background media is set with `swset`. The
+            // black color of the terminal is not painted in that case so that the image/video
+            // behind the terminal is visible, while the text keeps the colors of the color scheme.
+            mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3], isBackgroundTransparent());
 
             // render the text selection handles
             renderTextSelection();
         }
+    }
+
+    /**
+     * Set if the default background color of the terminal should be painted or not. If it is set to
+     * {@code true}, then the background of the view itself should also be transparent (like with
+     * {@link #setBackgroundColor(int)}), so that a background media behind the view is visible and
+     * the terminal text is drawn on top of it.
+     *
+     * @param transparent If the terminal background should be transparent.
+     */
+    public void setBackgroundTransparent(boolean transparent) {
+        if (mBackgroundTransparent == transparent) return;
+        mBackgroundTransparent = transparent;
+        invalidate();
+    }
+
+    /**
+     * @return Returns {@code true} if the terminal is rendered transparently on top of a background
+     * media, see {@link #setBackgroundTransparent(boolean)}.
+     */
+    private boolean isBackgroundTransparent() {
+        return mBackgroundTransparent;
     }
 
     public TerminalSession getCurrentSession() {

@@ -59,6 +59,14 @@
 
 
 
+    <!-- Custom commands of this fork -->
+    <string name="action_mio_background_media">Background media</string>
+    <string name="mio_background_media_dialog_title">Background media</string>
+    <string name="mio_background_media_dialog_message">Set an image or a video behind the terminal, or enable the audio of the video.\n\nswset &lt;file&gt;\nswset\nswset off\nso\nso off</string>
+    <string name="mio_background_media_dialog_clear">Clear</string>
+
+
+
     <!-- Terminal Popup -->
     <string name="action_select_url">Select URL</string>
     <string name="title_select_url_dialog">Click URL to copy or long press to open</string>

@@ -521,7 +521,18 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (!mActivity.isVisible()) return;
         TerminalSession session = mActivity.getCurrentSession();
         if (session != null && session.getEmulator() != null) {
-            mActivity.getWindow().getDecorView().setBackgroundColor(session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_BACKGROUND]);
+            // The background of the window is set to black (the default background color) since the
+            // media set with the `swset` command is shown behind the terminal, and the terminal
+            // itself is drawn transparently on top of it while a media is set. If the window
+            // background was set to the terminal color schemes background color and the terminal
+            // background was transparent, then the media would not be visible.
+            int backgroundColor = session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_BACKGROUND];
+            if (mActivity.getMioMediaBackgroundView() != null) {
+                mActivity.getWindow().getDecorView().setBackgroundColor(
+                    com.termux.app.mio.MioMediaBackgroundView.DEFAULT_BACKGROUND_COLOR);
+            } else {
+                mActivity.getWindow().getDecorView().setBackgroundColor(backgroundColor);
+            }
         }
     }
 

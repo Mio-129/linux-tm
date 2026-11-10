@@ -1,0 +1,51 @@
+name: Build (linux-tm fork)
+
+on:
+  push:
+    branches:
+      - master
+      - 'arena/**'
+      - 'mio/**'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package_variant: [ apt-android-7 ]
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Setup java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build debug APK
+        shell: bash {0}
+        env:
+          TERMUX_PACKAGE_VARIANT: ${{ matrix.package_variant }}
+        run: |
+          set -e
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Show APK files
+        if: always()
+        run: |
+          ls -l ./app/build/outputs/apk/debug/ || true
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: termux-app-${{ matrix.package_variant }}-debug-apks
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
