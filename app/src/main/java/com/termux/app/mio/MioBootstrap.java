@@ -9,11 +9,12 @@ import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
+import java.io.BufferedReader;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.Arrays;
 import java.util.List;
 
@@ -71,7 +72,7 @@ public final class MioBootstrap {
 
         if (allInstalled) {
             writeVersionFile(currentVersion);
-            Logger.logInfo(LOG_TAG, "Commands installed successfully");
+            Logger.logInfo(LOG_TAG, "Commands installed successfully: " + COMMANDS.toString());
         } else {
             Logger.logError(LOG_TAG, "Failed to install some of the commands, will retry on next app start");
         }
@@ -137,7 +138,7 @@ public final class MioBootstrap {
     private static String readVersionFile() {
         File versionFile = new File(VERSION_FILE_PATH);
         if (!versionFile.isFile()) return null;
-        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+        try (BufferedReader reader = new BufferedReader(
             new InputStreamReader(new FileInputStream(versionFile), "UTF-8"))) {
             String line = reader.readLine();
             return line == null ? null : line.trim();
