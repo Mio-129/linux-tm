@@ -180,8 +180,11 @@ public final class MioMenu {
         root.addView(volumeRow);
 
         int volumePercent = MioAudioStream.getInstance(context).getVolumePercent();
+        String audioProblem = MioAudioStream.getInstance(context).getLastProblem();
+
         TextView volumeView = new TextView(context);
-        volumeView.setText("Medya ses seviyesi: " + (volumePercent < 0 ? "?" : volumePercent + "%"));
+        volumeView.setText("Medya ses seviyesi: " + (volumePercent < 0 ? "?" : volumePercent + "%") +
+            (audioProblem == null ? "" : "\n⚠ " + audioProblem));
         volumeView.setTextSize(12);
         root.addView(volumeView);
 
@@ -292,14 +295,62 @@ public final class MioMenu {
             activity.startActivity(new Intent(activity, SettingsActivity.class)));
         root.addView(otherRow);
 
+        // ---------------------------------------------------------------------- tools ------
+        addSection(context, root, "Terminal araçları");
+
+        LinearLayout toolsRow1 = new LinearLayout(context);
+        toolsRow1.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, toolsRow1, "Kaynak değiştir", v -> {
+            closePanel();
+            runCommand(activity, "termux-change-repo");
+        });
+        addActionButton(context, toolsRow1, "Yedekle (tar)", v -> {
+            closePanel();
+            runCommand(activity, "cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C /data/data/com.termux/files home usr");
+        });
+        addActionButton(context, toolsRow1, "Yeniden başlat", v -> {
+            closePanel();
+            activity.finishAffinity();
+            android.os.Process.killProcess(android.os.Process.myPid());
+        });
+        root.addView(toolsRow1);
+
+        LinearLayout toolsRow2 = new LinearLayout(context);
+        toolsRow2.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, toolsRow2, "SSH başlat", v -> {
+            closePanel();
+            runCommand(activity, "pkg install -y openssh >/dev/null 2>&1; sshd; echo \"SSH: $(ifconfig 2>/dev/null | grep 'inet ' | head -1)\"");
+        });
+        addActionButton(context, toolsRow2, "X11 / QEMU", v -> {
+            closePanel();
+            runCommand(activity, "pkg update >/dev/null; pkg install -y x11-repo qemu-system-x86-64 xfce4 >/dev/null 2>&1; echo 'X11 ve QEMU kuruldu, termux-x11 :1 & ile başlat'");
+        });
+        addActionButton(context, toolsRow2, "IP adresi", v -> {
+            closePanel();
+            runCommand(activity, "ifconfig 2>/dev/null || ip addr");
+        });
+        root.addView(toolsRow2);
+
         ScrollView scrollView = new ScrollView(context);
         scrollView.addView(root);
 
-        sCurrentPanel = new AlertDialog.Builder(activity)
+        AlertDialog panel = new AlertDialog.Builder(activity)
             .setTitle(R.string.mio_menu_title)
             .setView(scrollView)
             .setPositiveButton(R.string.mio_menu_close, null)
-            .show();
+            .create();
+        panel.setOnDismissListener(dialog -> {
+            if (sCurrentPanel == dialog) sCurrentPanel = null;
+        });
+        panel.show();
+        sCurrentPanel = panel;
+    }
+
+    /** Close the panel without touching the terminal, used before a command that needs the screen. */
+    private static void closePanel() {
+        Dialog panel = sCurrentPanel;
+        if (panel != null && panel.isShowing()) panel.dismiss();
+        sCurrentPanel = null;
     }
 
     /** Add a section header to the panel. */

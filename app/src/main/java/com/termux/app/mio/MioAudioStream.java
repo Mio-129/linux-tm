@@ -49,6 +49,14 @@ public final class MioAudioStream {
     /** The last volume of the media stream that was set by `so ses +`/`-`, -1 if not set. */
     private int mVolume = -1;
 
+    /**
+     * The reason the last action could not play any sound, for example because the video has no
+     * audio track and there is no audio file with the same name next to it. The value is shown in
+     * the panel and by the commands, so that a silent video is not mistaken for a broken button.
+     */
+    @Nullable
+    private String mLastProblem;
+
     private Toast mLastToast;
 
     private MioAudioStream(@NonNull Application application) {
@@ -74,22 +82,38 @@ public final class MioAudioStream {
      */
     public void setLatched(final boolean enabled) {
         mLatched = enabled;
+        mLastProblem = null;
         mMainHandler.post(() -> {
             MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();
             if (backgroundView == null || !backgroundView.isVideo()) {
                 showToast(enabled
-                    ? "Ses akışı açıldı; bir video ayarlayınca sesi duyulacak."
-                    : "Ses akışı kapatıldı.", true);
+                    ? "Ses açık tutuldu; bir video ayarlayınca sesi duyulacak."
+                    : "Ses kapatıldı.", true);
                 return;
             }
 
             boolean ok = backgroundView.setAudioEnabled(enabled);
-            if (enabled && !ok) {
-                showToast("Ses açılamadı.", true);
+            if (enabled) {
+                mLastProblem = backgroundView.getAudioProblem();
+                if (mLastProblem != null) {
+                    showToast("Ses açıldı ama ses yok: " + mLastProblem, true);
+                } else if (ok) {
+                    showToast("Ses açıldı (açık kalacak).", true);
+                } else {
+                    showToast("Ses açılamadı.", true);
+                }
             } else {
-                showToast(enabled ? "Ses açıldı (açık kalacak)." : "Ses kapatıldı.", true);
+                showToast("Ses kapatıldı.", true);
             }
         });
+    }
+
+    /** @return Returns the reason the audio may not be audible, or {@code null} if it should work. */
+    @Nullable
+    public String getLastProblem() {
+        MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();
+        String problem = backgroundView == null ? null : backgroundView.getAudioProblem();
+        return problem != null ? problem : mLastProblem;
     }
 
     /**
@@ -126,7 +150,9 @@ public final class MioAudioStream {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to adjust the media volume", e);
             }
 
-            showToast("Ses seviyesi: " + next + "/" + max, true);
+            String problem = MioMediaBackgroundView.getInstance() == null ? null
+                : MioMediaBackgroundView.getInstance().getAudioProblem();
+            showToast("Ses seviyesi: " + next + "/" + max + (problem == null ? "" : " — " + problem), true);
         });
     }
 

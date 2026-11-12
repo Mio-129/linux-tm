@@ -112,6 +112,7 @@ case "$1" in
                 write_request "command=so" "name=" "media_type=video" "audio=1" "dir=$(pwd)"
                 send_command -a "$ACTION_AUDIO_STREAM" --es mode on || exit 1
                 printf 'so: ses akışı açıldı (ses açık kalacak)\n'
+                printf 'so: ses duyulmuyorsa video sessiz olabilir; menüdeki uyarıya bak\n'
                 ;;
         esac
         exit 0

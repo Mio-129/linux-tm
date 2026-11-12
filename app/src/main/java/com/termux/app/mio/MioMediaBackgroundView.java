@@ -81,6 +81,14 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
     /** If the audio of the currently shown video is enabled by the `so` command. */
     private boolean mAudioEnabled;
 
+    /**
+     * The reason the audio of the current video may not be audible, like a video without an audio
+     * track that has no audio file with the same name next to it. {@code null} while unknown or
+     * while the audio should work.
+     */
+    @Nullable
+    private String mAudioProblem;
+
     /** The pending play request which is run when the {@link #mSurface} becomes available. */
     @Nullable
     private Runnable mPendingPlayRunnable;
@@ -268,6 +276,7 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
             mMediaFile = file;
             mIsVideo = false;
             mAudioEnabled = false;
+            mAudioProblem = null;
             releaseAudioPlayer();
             updateImageMatrix();
             notifyMediaStateChanged();
@@ -293,6 +302,7 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
         mMediaFile = file;
         mIsVideo = true;
         mAudioEnabled = playAudio;
+        mAudioProblem = null;
         mTextureView.setVisibility(VISIBLE);
 
         notifyMediaStateChanged();
@@ -338,7 +348,9 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
             }
 
             if (enabled) {
-                startSeparateAudioFileIfNeeded(mMediaFile, mMediaPlayer);
+                if (mMediaPlayer != null && !hasAudioTrack(mMediaPlayer) && mAudioPlayer == null) {
+                    startSeparateAudioFileIfNeeded(mMediaFile, mMediaPlayer);
+                }
             } else {
                 releaseAudioPlayer();
             }
@@ -520,16 +532,22 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
      * audio while the video keeps playing silently.
      */
     private void startSeparateAudioFileIfNeeded(@Nullable File videoFile, @NonNull MediaPlayer mediaPlayer) {
-        if (videoFile == null || !mAudioEnabled || mAudioPlayer != null) return;
-        if (hasAudioTrack(mediaPlayer)) return;
+        if (videoFile == null) return;
+        if (hasAudioTrack(mediaPlayer)) {
+            mAudioProblem = null;
+            return;
+        }
+        if (!mAudioEnabled || mAudioPlayer != null) return;
 
         File audioFile = MioMediaFiles.findSiblingAudioFile(videoFile);
         if (audioFile == null) {
             Logger.logWarn(LOG_TAG, "Video file has no audio track and no sibling audio file found for \"" + videoFile.getAbsolutePath() + "\"");
+            mAudioProblem = "videoda ses yok, yanına aynı isimli bir .mp3/.m4a koy";
             return;
         }
 
         Logger.logInfo(LOG_TAG, "Video file has no audio track, playing audio from sibling file \"" + audioFile.getAbsolutePath() + "\"");
+        mAudioProblem = null;
         try {
             MediaPlayer audioPlayer = new MediaPlayer();
             audioPlayer.setLooping(true);
