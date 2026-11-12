@@ -84,17 +84,49 @@ public final class MioMenu {
 
     /**
      * Show the main menu of the fork.
+     *
+     * The menu is built on the fly so that the current state of every toggle can be shown and so
+     * that a failure while reading a state cannot prevent the menu from being shown at all.
      */
     public static void show(@NonNull TermuxActivity activity) {
+        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
+        boolean snow = false;
+        boolean particles = false;
+        boolean hasMedia = false;
+        boolean isVideo = false;
+        boolean audioEnabled = false;
+
+        if (backgroundView != null) {
+            try {
+                MioParticleView.Mode mode = backgroundView.getAnimationMode();
+                snow = mode == MioParticleView.Mode.SNOW;
+                particles = mode == MioParticleView.Mode.PARTICLES;
+                hasMedia = backgroundView.hasMedia();
+                isVideo = backgroundView.isVideo();
+                audioEnabled = backgroundView.isAudioEnabled();
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the background state", e);
+            }
+        }
+
+        String volumeLabel = "Ses tuşları: " + (readVolumeKeysEnabled(activity) ? "medya sesi" : "terminal kısayolu (Ctrl/Esc)");
+        String audioLabel = !isVideo ? "Video sesi: (video yok)"
+            : audioEnabled ? "Video sesi: AÇIK (kapat)"
+            : "Video sesi: kapalı (aç)";
+
         String[] items = new String[]{
-            "Arka plan medyası (fotoğraf / video)",
-            "Kar animasyonu (aç / kapat)",
-            "Parçacık animasyonu (aç / kapat)",
+            "Arka plan: " + (hasMedia ? "medya ayarlı" : "siyah"),
+            "Kar animasyonu: " + (snow ? "AÇIK (kapat)" : "kapalı (aç)"),
+            "Parçacık animasyonu: " + (particles ? "AÇIK (kapat)" : "kapalı (aç)"),
+            "Arka plan medyası ayarla (galeri / dosya / temizle)",
+            audioLabel,
             "Yazı boyutu",
             "Renkler ve tema",
-            "Tam ekran (aç / kapat)",
+            "Tam ekran: " + (readFullScreen(activity) ? "AÇIK (kapat)" : "kapalı (aç)"),
+            volumeLabel,
             "Oturumlar (yeni / yeniden adlandır)",
             "Komutlar ve yardım",
+            "Sürüm ve teşhis",
             "Ayarlar"
         };
 
@@ -102,38 +134,165 @@ public final class MioMenu {
             .setTitle(R.string.mio_menu_title)
             .setItems(items, (dialog, which) -> {
                 dialog.dismiss();
-                switch (which) {
-                    case 0:
-                        showBackgroundMediaMenu(activity);
-                        break;
-                    case 1:
-                        toggleSnow(activity);
-                        break;
-                    case 2:
-                        toggleParticles(activity);
-                        break;
-                    case 3:
-                        showFontSizeDialog(activity);
-                        break;
-                    case 4:
-                        showColorMenu(activity);
-                        break;
-                    case 5:
-                        toggleFullScreen(activity);
-                        break;
-                    case 6:
-                        showSessionMenu(activity);
-                        break;
-                    case 7:
-                        showCommandsDialog(activity);
-                        break;
-                    case 8:
-                        activity.startActivity(new Intent(activity, SettingsActivity.class));
-                        break;
-                    default:
+                try {
+                    switch (which) {
+                        case 0:
+                            showStatusDialog(activity);
+                            break;
+                        case 1:
+                            toggleSnow(activity);
+                            break;
+                        case 2:
+                            toggleParticles(activity);
+                            break;
+                        case 3:
+                            showBackgroundMediaMenu(activity);
+                            break;
+                        case 4:
+                            toggleVideoAudio(activity);
+                            break;
+                        case 5:
+                            showFontSizeDialog(activity);
+                            break;
+                        case 6:
+                            showColorMenu(activity);
+                            break;
+                        case 7:
+                            toggleFullScreen(activity);
+                            break;
+                        case 8:
+                            toggleVolumeKeys(activity);
+                            break;
+                        case 9:
+                            showSessionMenu(activity);
+                            break;
+                        case 10:
+                            showCommandsDialog(activity);
+                            break;
+                        case 11:
+                            showAboutDialog(activity);
+                            break;
+                        case 12:
+                            activity.startActivity(new Intent(activity, SettingsActivity.class));
+                            break;
+                        default:
+                    }
+                } catch (Exception e) {
+                    Logger.logStackTraceWithMessage(LOG_TAG, "Mio menu action failed", e);
+                    showToast(activity, "Mio menü hatası: " + e);
                 }
             })
             .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Read the fullscreen state without letting a failure prevent the menu from being shown. */
+    private static boolean readFullScreen(@NonNull TermuxActivity activity) {
+        try {
+            return MioTextStyle.isFullScreen(activity);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the fullscreen state", e);
+            return false;
+        }
+    }
+
+    /** Read the volume keys state without letting a failure prevent the menu from being shown. */
+    private static boolean readVolumeKeysEnabled(@NonNull TermuxActivity activity) {
+        try {
+            return MioTextStyle.isVolumeKeysEnabled(activity);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the volume keys state", e);
+            return false;
+        }
+    }
+
+    /** Show the current state of the background, the animation, the font and the colors. */
+    private static void showStatusDialog(@NonNull TermuxActivity activity) {
+        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
+        StringBuilder message = new StringBuilder();
+
+        if (backgroundView == null || !backgroundView.hasMedia()) {
+            message.append("Arka plan: siyah (medya yok)");
+        } else {
+            File media = backgroundView.getMediaFile();
+            message.append("Arka plan: ").append(backgroundView.isVideo() ? "video" : "fotoğraf")
+                .append(" — ").append(media == null ? "?" : media.getName());
+            if (backgroundView.isVideo())
+                message.append("\nSes: ").append(backgroundView.isAudioEnabled() ? "açık" : "kapalı");
+        }
+
+        MioParticleView.Mode mode = backgroundView == null ? MioParticleView.Mode.NONE : backgroundView.getAnimationMode();
+        message.append("\nAnimasyon: ").append(mode == MioParticleView.Mode.NONE ? "kapalı" :
+            mode == MioParticleView.Mode.SNOW ? "kar" : "parçacık");
+        message.append("\nYazı boyutu: ").append(MioTextStyle.getFontSize(activity));
+        message.append("\nTam ekran: ").append(readFullScreen(activity) ? "açık" : "kapalı");
+        message.append("\nSes tuşları: ").append(readVolumeKeysEnabled(activity) ? "medya sesi" : "terminal kısayolu");
+
+        new AlertDialog.Builder(activity)
+            .setTitle(R.string.mio_menu_status_title)
+            .setMessage(message.toString())
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    /** Turn the audio of the background video on or off, the same as the `so` and `so off` commands. */
+    private static void toggleVideoAudio(@NonNull TermuxActivity activity) {
+        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
+        if (backgroundView == null || !backgroundView.isVideo()) {
+            showToast(activity, "Önce bir video ayarla: swset video.mp4");
+            return;
+        }
+
+        boolean enabled = backgroundView.isAudioEnabled();
+        if (enabled) {
+            backgroundView.setAudioEnabled(false);
+            showToast(activity, "Video sesi kapatıldı.");
+        } else if (backgroundView.setAudioEnabled(true)) {
+            showToast(activity, "Video sesi açıldı.");
+        } else {
+            showToast(activity, "Video sesi açılamadı.");
+        }
+    }
+
+    /** Switch the volume keys between the media volume and the terminal shortcuts (Ctrl/Esc). */
+    private static void toggleVolumeKeys(@NonNull TermuxActivity activity) {
+        boolean enabled = !MioTextStyle.isVolumeKeysEnabled(activity);
+        MioTextStyle.setVolumeKeysEnabled(activity, enabled);
+        showToast(activity, enabled
+            ? "Ses tuşları medya sesini değiştirir."
+            : "Ses tuşları terminal kısayolu (Ctrl/Esc) olarak çalışır.");
+    }
+
+    /** Show the version of the app and of the installed commands, and the state of the background. */
+    private static void showAboutDialog(@NonNull TermuxActivity activity) {
+        StringBuilder message = new StringBuilder();
+        message.append("Uygulama: ").append(com.termux.BuildConfig.VERSION_NAME)
+            .append(" (").append(com.termux.BuildConfig.VERSION_CODE).append(")\n");
+
+        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
+        message.append("Menü: ").append(backgroundView == null ? "arka plan görünümü YOK" : "hazır").append('\n');
+        if (backgroundView != null) {
+            message.append("Animasyon: ").append(backgroundView.getAnimationMode()).append('\n');
+            File media = backgroundView.getMediaFile();
+            message.append("Medya: ").append(media == null ? "yok" : media.getName()).append('\n');
+        }
+
+        message.append("\nKurulu komutlar:\n");
+        for (String command : new String[]{"swset", "so", "mio"}) {
+            File file = new File(com.termux.shared.termux.TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, command);
+            message.append("  ").append(command).append(": ")
+                .append(file.isFile() ? "var (" + file.length() + " bayt)" : "YOK").append('\n');
+        }
+
+        // Reading the installed commands is fast, but reading their content is not, so only the
+        // presence and the size are shown. The full check is done by `mio teshis`.
+        message.append("\nAyrıntılı kontrol için terminalde: mio teshis");
+
+        new AlertDialog.Builder(activity)
+            .setTitle(R.string.mio_menu_about_title)
+            .setMessage(message.toString())
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.mio_menu_run_command, (dialog, which) -> showRunCommandDialog(activity))
             .show();
     }
 

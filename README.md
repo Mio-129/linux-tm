@@ -125,6 +125,8 @@ mio yazi +             # bigger font, "mio yazi -" smaller, "mio yazi 16" set a 
 mio tema matrix        # themes: varsayilan, matrix, gece, mor, sicak
 mio renk foreground '#00FF66'   # change a single color (foreground/background/cursor/red/green/...)
 mio tam ekran          # toggle fullscreen
+mio ses                # volume keys: media volume <-> terminal shortcuts (Ctrl/Esc)
+mio teshis             # diagnose: installed commands, sizes, whether the menu command is delivered
 mio oturum             # open a new session
 mio yardim             # help
 ```

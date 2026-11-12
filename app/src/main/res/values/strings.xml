@@ -82,6 +82,8 @@
     <string name="mio_menu_run_command">Komut çalıştır</string>
     <string name="mio_menu_run">Çalıştır</string>
     <string name="mio_menu_pick_file">Fotoğraf veya video seç</string>
+    <string name="mio_menu_status_title">Durum</string>
+    <string name="mio_menu_about_title">Sürüm ve teşhis</string>
 
 
 

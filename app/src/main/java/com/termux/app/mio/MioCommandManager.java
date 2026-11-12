@@ -66,6 +66,8 @@ public final class MioCommandManager {
     public static final String ACTION_SESSION = "com.termux.mio.action.SESSION";
     /** The broadcast action to toggle the side menus or to show the current state. */
     public static final String ACTION_STYLE = "com.termux.mio.action.STYLE";
+    /** The broadcast action sent by the `mio ses` command to switch the volume keys behaviour. */
+    public static final String ACTION_VOLUME_KEYS = "com.termux.mio.action.VOLUME_KEYS";
 
     /** The extra for the animation mode, valid values are {@link #MODE_SNOW}, {@link #MODE_PARTICLES} and {@link #MODE_OFF}. */
     public static final String EXTRA_ANIMATION_MODE = "mode";
@@ -261,6 +263,12 @@ public final class MioCommandManager {
                 setStyle(intent.getStringExtra(EXTRA_MODE));
                 return true;
             }
+            case ACTION_VOLUME_KEYS: {
+                MioRequest request = MioRequest.fromRequestFile("mio");
+                if (request != null) MioRequest.deleteRequestFile();
+                toggleVolumeKeys();
+                return true;
+            }
             default:
                 // The scripts may fall back to `termux-am startservice` with ACTION_SERVICE_EXECUTE
                 // if broadcasts are restricted on the device, in which case the extra intent is
@@ -295,6 +303,7 @@ public final class MioCommandManager {
             case ACTION_FULLSCREEN:
             case ACTION_SESSION:
             case ACTION_STYLE:
+            case ACTION_VOLUME_KEYS:
                 return true;
             default:
                 return false;
@@ -705,6 +714,16 @@ public final class MioCommandManager {
             boolean enabled = !MioTextStyle.isFullScreen(mApplication);
             MioTextStyle.setFullScreen(mApplication, enabled);
             showToast(enabled ? "mio: tam ekran açıldı." : "mio: tam ekran kapatıldı.");
+        });
+    }
+
+    /** Switch the volume keys between the media volume and the terminal shortcuts, like `mio ses`. */
+    private void toggleVolumeKeys() {
+        mExecutor.execute(() -> {
+            boolean enabled = !MioTextStyle.isVolumeKeysEnabled(mApplication);
+            MioTextStyle.setVolumeKeysEnabled(mApplication, enabled);
+            showToast(enabled ? "mio: ses tuşları medya sesini değiştirir."
+                : "mio: ses tuşları terminal kısayolu (Ctrl/Esc).", true);
         });
     }
 

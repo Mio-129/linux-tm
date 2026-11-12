@@ -128,6 +128,52 @@ public final class MioTextStyle {
     }
 
     /* ---------------------------------------------------------------------------------------- */
+    /* Volume keys                                                                              */
+    /* ---------------------------------------------------------------------------------------- */
+
+    /**
+     * @return Returns {@code true} if the volume keys of the device should change the media volume
+     * instead of being used as Ctrl/Esc shortcuts by the terminal, which is the case when the
+     * {@code volume-keys} property is set to {@code volume}.
+     */
+    public static boolean isVolumeKeysEnabled(@NonNull Context context) {
+        TermuxActivity activity = TermuxActivity.getInstance();
+        if (activity != null && activity.getProperties() != null)
+            return activity.getProperties().areVirtualVolumeKeysDisabled();
+        return "volume".equals(getProperty("volume-keys"));
+    }
+
+    /**
+     * Set if the volume keys should change the media volume or be used as terminal shortcuts.
+     *
+     * @return Returns the value that was written.
+     */
+    public static boolean setVolumeKeysEnabled(@NonNull Context context, boolean enabled) {
+        boolean written = setProperty("volume-keys", enabled ? "volume" : "virtual");
+        if (!written) return !enabled;
+        reloadStyling(context);
+        return enabled;
+    }
+
+    /* ---------------------------------------------------------------------------------------- */
+    /* Keyboard long press                                                                      */
+    /* ---------------------------------------------------------------------------------------- */
+
+    /**
+     * @return Returns {@code true} if a long press on the "Keyboard" button of the drawer opens the
+     * Mio menu of the fork instead of toggling the terminal toolbar, which is the default since the
+     * drawer button is the easiest way to reach the menu on a phone.
+     */
+    public static boolean isMioMenuOnKeyboardLongPress(@NonNull Context context) {
+        return !"false".equals(getProperty("mio-menu-on-keyboard-long-press"));
+    }
+
+    /** Enable or disable opening the Mio menu with a long press on the "Keyboard" button. */
+    public static boolean setMioMenuOnKeyboardLongPress(@NonNull Context context, boolean enabled) {
+        return setProperty("mio-menu-on-keyboard-long-press", enabled ? "true" : "false");
+    }
+
+    /* ---------------------------------------------------------------------------------------- */
     /* Colors                                                                                   */
     /* ---------------------------------------------------------------------------------------- */
 

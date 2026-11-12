@@ -679,6 +679,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
 
         findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
+            if (com.termux.app.mio.MioTextStyle.isMioMenuOnKeyboardLongPress(this)) {
+                MioMenu.show(this);
+                getDrawer().closeDrawers();
+                return true;
+            }
             toggleTerminalToolbar();
             return true;
         });

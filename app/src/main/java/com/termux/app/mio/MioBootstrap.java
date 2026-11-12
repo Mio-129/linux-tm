@@ -63,7 +63,7 @@ public final class MioBootstrap {
         }
 
         String installedVersion = readVersionFile();
-        String currentVersion = getCurrentVersion();
+        String currentVersion = getCurrentVersion(context);
         boolean forceInstall = installedVersion == null || !installedVersion.equals(currentVersion) ||
             !areCommandsInstalled(binDir) || !areCommandsUpToDate(context, binDir);
 
@@ -166,8 +166,26 @@ public final class MioBootstrap {
         }
     }
 
+    /**
+     * The version is the app version combined with the total length of the command scripts, so that
+     * the commands are also reinstalled when a script changes without a version bump, like during
+     * development, and so that a broken or truncated installed script is always replaced.
+     */
     @NonNull
-    private static String getCurrentVersion() {
-        return BuildConfig.VERSION_NAME + "-" + BuildConfig.VERSION_CODE;
+    private static String getCurrentVersion(@Nullable Context context) {
+        StringBuilder version = new StringBuilder(BuildConfig.VERSION_NAME)
+            .append('-').append(BuildConfig.VERSION_CODE);
+
+        if (context != null) {
+            for (String command : COMMANDS) {
+                try (InputStream asset = context.getAssets().open(ASSET_DIR + "/" + command)) {
+                    version.append('-').append(asset.available());
+                } catch (IOException e) {
+                    version.append("-0");
+                }
+            }
+        }
+
+        return version.toString();
     }
 }
