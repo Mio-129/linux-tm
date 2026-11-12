@@ -122,7 +122,8 @@ public final class MioMenu {
                 dialog.dismiss();
                 String selected = labels[which];
                 if (selected.startsWith("Galeriden")) {
-                    pickMediaFile(activity);
+                    // The file picker lives in the panel activity, it copies the file and runs swset
+                    MioMenuActivity.start(activity);
                 } else if (selected.startsWith("Dosya adı")) {
                     showSetMediaByFileNameDialog(activity);
                 } else if (selected.startsWith("Klasördeki")) {
