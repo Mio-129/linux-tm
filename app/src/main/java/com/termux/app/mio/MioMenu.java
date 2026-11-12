@@ -380,7 +380,7 @@ public final class MioMenu {
     }
 
     /** Show a short message over the terminal. */
-    private static void showToast(@NonNull TermuxActivity activity, @NonNull String message) {
+    private static void showToast(@NonNull android.app.Activity activity, @NonNull String message) {
         Toast.makeText(activity, message, Toast.LENGTH_SHORT).show();
     }
 
