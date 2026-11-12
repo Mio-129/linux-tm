@@ -48,14 +48,15 @@ jobs:
         if: failure()
         shell: bash {0}
         run: |
-          grep -E "^(e:|error:)|^/.*\.java:[0-9]+: error" /tmp/gradle.log 2>/dev/null | head -30 | \
+          # The "What went wrong" section has the actual reason, print it as annotations
+          awk '/What went wrong/{flag=1} flag' /tmp/gradle.log 2>/dev/null | head -40 | \
             while IFS= read -r line; do
               echo "::error::$line"
             done
-          echo "--- last 40 lines ---"
-          tail -40 /tmp/gradle.log 2>/dev/null | while IFS= read -r line; do
-            echo "::error::$line"
-          done
+          grep -E "error:|e: |Caused by|OutOfMemory|Execution failed" /tmp/gradle.log 2>/dev/null | head -30 | \
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done
 
       - name: Show APK files
         if: always()
