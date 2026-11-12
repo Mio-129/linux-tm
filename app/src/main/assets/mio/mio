@@ -99,7 +99,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 3 (menü, animasyon, yazı, renk, tam ekran, ses tuşları)\n'
+    printf 'mio sürüm: 4 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, ses açma tuşu kısayolu)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
