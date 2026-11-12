@@ -379,6 +379,17 @@ public final class MioMenu {
         showToast(activity, command);
     }
 
+    /** Show a short message over the terminal. */
+    private static void showToast(@NonNull TermuxActivity activity, @NonNull String message) {
+        Toast.makeText(activity, message, Toast.LENGTH_SHORT).show();
+    }
+
+    /** Quote a value so that it can be passed to the shell as a single argument. */
+    @NonNull
+    private static String quote(@NonNull String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
+    }
+
     /**
      * @return Returns the running session with the lowest index that the user can type in, falling
      * back to the current session, or {@code null} if the service is not bound.
