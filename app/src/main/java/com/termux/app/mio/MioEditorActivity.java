@@ -4,9 +4,12 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,10 +62,16 @@ public final class MioEditorActivity extends Activity {
     };
 
     private EditText mEditor;
+    private TextView mLineNumbers;
     private TextView mTitle;
     private Button mRunButton;
     private File mFile;
     private String mOpenedContent = "";
+    private boolean mShowLineNumbers = true;
+
+    /** The preference the line number gutter is remembered in. */
+    private static final String PREFS_NAME = "mio_editor";
+    private static final String PREF_LINE_NUMBERS = "line_numbers";
 
     /* ---------------------------------------------------------------------------------------- */
     /* Start                                                                                     */
@@ -185,6 +194,13 @@ public final class MioEditorActivity extends Activity {
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(0xFF0B0F13);
 
+        // The editor and the line numbers are in the same scroll view, so that they always scroll
+        // together; soft wrapping is disabled, so that a line of the file is exactly one line of
+        // the gutter and the numbers stay next to their line.
+        LinearLayout editorRow = new LinearLayout(this);
+        editorRow.setOrientation(LinearLayout.HORIZONTAL);
+        editorRow.setBackgroundColor(0xFF0B0F13);
+
         mEditor = new EditText(this);
         mEditor.setTypeface(Typeface.MONOSPACE);
         mEditor.setTextSize(13);
@@ -194,11 +210,50 @@ public final class MioEditorActivity extends Activity {
         mEditor.setPadding(dp(10), dp(8), dp(10), dp(8));
         mEditor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
             | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        mEditor.setHorizontallyScrolling(false);
+        mEditor.setHorizontallyScrolling(true);
         mEditor.setSingleLine(false);
         mEditor.setTextIsSelectable(true);
-        scrollView.addView(mEditor, new ViewGroup.LayoutParams(
+        mEditor.setIncludeFontPadding(false);
+
+        mLineNumbers = new TextView(this);
+        mLineNumbers.setTypeface(Typeface.MONOSPACE);
+        mLineNumbers.setTextSize(13);
+        mLineNumbers.setTextColor(0xFF5A6B7A);
+        mLineNumbers.setBackgroundColor(0xFF11181F);
+        mLineNumbers.setGravity(Gravity.TOP | Gravity.END);
+        mLineNumbers.setPadding(dp(6), dp(8), dp(10), dp(8));
+        mLineNumbers.setIncludeFontPadding(false);
+        mLineNumbers.setText("1");
+        // The gutter has to use the same line height as the editor, otherwise the numbers drift
+        // away from their lines after a few dozen lines
+        mLineNumbers.post(() -> alignGutterLineHeight());
+
+        editorRow.addView(mLineNumbers, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        editorRow.addView(mEditor, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        scrollView.addView(editorRow, new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        mShowLineNumbers = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(PREF_LINE_NUMBERS, true);
+        mLineNumbers.setVisibility(mShowLineNumbers ? View.VISIBLE : View.GONE);
+
+        mEditor.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable editable) {
+                updateLineNumbers();
+            }
+        });
 
         root.addView(scrollView, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -210,6 +265,49 @@ public final class MioEditorActivity extends Activity {
         return root;
     }
 
+    /** Make one line of the gutter exactly as tall as one line of the editor. */
+    private void alignGutterLineHeight() {
+        if (mEditor == null || mLineNumbers == null) return;
+        int editorLineHeight = mEditor.getLineHeight();
+        int gutterLineHeight = mLineNumbers.getLineHeight();
+        if (editorLineHeight <= 0 || gutterLineHeight <= 0) return;
+        float extra = editorLineHeight - gutterLineHeight;
+        mLineNumbers.setLineSpacing(extra > 0 ? extra : 0f, 1f);
+    }
+
+    /** Rewrite the numbers at the left of the editor, one number per line of the text. */
+    private void updateLineNumbers() {
+        if (mEditor == null || mLineNumbers == null || !mShowLineNumbers) return;
+
+        String text = mEditor.getText().toString();
+        int lines = 1;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') lines++;
+        }
+
+        StringBuilder numbers = new StringBuilder(lines * 4);
+        for (int i = 1; i <= lines; i++) {
+            numbers.append(i);
+            if (i < lines) numbers.append('\n');
+        }
+        if (!numbers.toString().equals(mLineNumbers.getText().toString())) {
+            mLineNumbers.setText(numbers);
+        }
+    }
+
+    /** Show or hide the line numbers and remember the choice. */
+    private void toggleLineNumbers() {
+        mShowLineNumbers = !mShowLineNumbers;
+        if (mLineNumbers != null) {
+            mLineNumbers.setVisibility(mShowLineNumbers ? View.VISIBLE : View.GONE);
+            if (mShowLineNumbers) updateLineNumbers();
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_LINE_NUMBERS, mShowLineNumbers).apply();
+        Toast.makeText(this, mShowLineNumbers ? "Satır numaraları açık" : "Satır numaraları kapalı",
+            Toast.LENGTH_SHORT).show();
+    }
+
     /** The row of the code keys that are hard to type on a phone keyboard. */
     @NonNull
     private View buildCodeKeyRow() {
@@ -219,6 +317,20 @@ public final class MioEditorActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(dp(4), dp(2), dp(4), dp(2));
+
+        // The first key of the row toggles the line numbers
+        Button lineNumbers = new Button(this);
+        lineNumbers.setText("1·2·3");
+        lineNumbers.setTextSize(13);
+        lineNumbers.setAllCaps(false);
+        lineNumbers.setMinWidth(0);
+        lineNumbers.setMinimumWidth(0);
+        lineNumbers.setPadding(dp(8), 0, dp(8), 0);
+        lineNumbers.setOnClickListener(v -> toggleLineNumbers());
+        LinearLayout.LayoutParams gutterParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gutterParams.setMargins(dp(2), 0, dp(2), 0);
+        row.addView(lineNumbers, gutterParams);
 
         for (String key : CODE_KEYS) {
             Button button = new Button(this);

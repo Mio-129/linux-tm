@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mio — linux-tm kurulum ve forum</title>
+<meta name="description" content="Mio (linux-tm) Termux fork'u: kurulum, özellikler ve topluluk forumu.">
+<meta name="color-scheme" content="dark">
+<style>
+  :root{
+    --bg:#101418; --bg2:#0b0f13; --panel:#161c22; --panel2:#1b232b;
+    --line:#243039; --text:#dce6ef; --dim:#8fa3b3; --accent:#4ec9a8; --accent2:#5a9fd4;
+    --danger:#e0675f; --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 var(--mono);-webkit-text-size-adjust:100%}
+  a{color:var(--accent2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,kbd,pre{font-family:var(--mono)}
+  .wrap{max-width:960px;margin:0 auto;padding:0 18px}
+  header{position:sticky;top:0;z-index:20;background:rgba(16,20,24,.92);border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+  header .wrap{display:flex;align-items:center;gap:14px;height:58px}
+  .logo{font-weight:700;letter-spacing:.5px}
+  .logo span{color:var(--accent)}
+  nav{display:flex;gap:16px;margin-left:auto;font-size:14px}
+  nav a{color:var(--dim)}
+  nav a:hover{color:var(--text)}
+  .lang{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px}
+  .lang button{background:transparent;color:var(--dim);border:0;padding:5px 9px;cursor:pointer;font-family:var(--mono)}
+  .lang button[aria-pressed="true"]{background:var(--panel2);color:var(--accent)}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  h1{font-size:clamp(26px,6vw,42px);line-height:1.15;margin:.2em 0 .4em}
+  h2{font-size:22px;margin:0 0 6px}
+  h3{font-size:17px;margin:0 0 8px}
+  p.lead{color:var(--dim);max-width:64ch}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .badge{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:3px 11px;font-size:12.5px;color:var(--dim)}
+  .badge b{color:var(--accent)}
+  .btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:10px;padding:11px 16px;border:1px solid var(--line);
+       background:var(--panel);color:var(--text);cursor:pointer;font:inherit;font-size:14.5px}
+  .btn:hover{background:var(--panel2);text-decoration:none}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#06231c;font-weight:700}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.small{padding:6px 11px;font-size:13px;border-radius:8px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-top:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card p{margin:0;color:var(--dim);font-size:14.5px}
+  .card .ico{color:var(--accent);font-size:13px;letter-spacing:2px;display:block;margin-bottom:8px}
+  ol.steps{counter-reset:s;list-style:none;padding:0;margin:22px 0 0;display:grid;gap:12px}
+  ol.steps>li{counter-increment:s;position:relative;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px 14px 52px}
+  ol.steps>li::before{content:counter(s);position:absolute;left:14px;top:13px;width:24px;height:24px;border-radius:50%;
+      background:var(--panel2);border:1px solid var(--line);color:var(--accent);font-size:13px;display:grid;place-items:center}
+  pre{position:relative;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 44px 12px 12px;
+      overflow:auto;margin:10px 0 0;font-size:13.5px;color:#cfe3d9}
+  pre .copy{position:absolute;top:6px;right:6px}
+  .note{border-left:3px solid var(--accent2);background:var(--panel);padding:10px 14px;border-radius:0 10px 10px 0;color:var(--dim);font-size:14px;margin-top:14px}
+  /* forum */
+  .forum-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:18px 0 0}
+  .forum-top .spacer{margin-left:auto}
+  .banner{border-radius:10px;padding:10px 14px;font-size:13.5px;margin-top:14px;border:1px solid var(--line);background:var(--panel);color:var(--dim)}
+  .banner.warn{border-color:#5b4a25;color:#e6c988}
+  .banner.err{border-color:#5f2e2b;color:#f0a6a1}
+  .banner.ok{border-color:#2c5b4a;color:#8fe0c2}
+  .thread{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+          padding:14px 16px;margin-top:10px;color:inherit;cursor:pointer;font:inherit}
+  .thread:hover{border-color:#31424e;background:var(--panel2)}
+  .thread .t{font-size:16px;color:var(--text)}
+  .thread .m{color:var(--dim);font-size:13px;margin-top:4px;display:flex;flex-wrap:wrap;gap:10px}
+  .tag{background:var(--bg2);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:12px;color:var(--accent)}
+  .post{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:10px}
+  .post .who{font-size:13px;color:var(--dim);margin-bottom:6px}
+  .post .who b{color:var(--text)}
+  .post .body{white-space:pre-wrap;word-break:break-word;font-size:14.5px}
+  form.pane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
+  label{display:block;font-size:13px;color:var(--dim);margin:10px 0 4px}
+  input,textarea,select{width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--text);
+        border-radius:8px;padding:9px 11px;font:inherit;font-size:14.5px}
+  input:focus,textarea:focus{outline:1px solid var(--accent2);border-color:var(--accent2)}
+  textarea{min-height:120px;resize:vertical}
+  .hidden{display:none!important}
+  footer{padding:26px 0 40px;color:var(--dim);font-size:13px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12.5px}
+  @media (max-width:600px){ nav{gap:10px;font-size:13px} .logo{font-size:15px} section{padding:34px 0} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo">mio<span>_</span>linux-tm</div>
+    <nav>
+      <a href="#kurulum" data-i18n="nav.install">Kurulum</a>
+      <a href="#ozellikler" data-i18n="nav.features">Özellikler</a>
+      <a href="#forum" data-i18n="nav.forum">Forum</a>
+    </nav>
+    <div class="lang" role="group" aria-label="Language">
+      <button id="lang-tr" aria-pressed="true" onclick="setLang('tr')">TR</button>
+      <button id="lang-en" aria-pressed="false" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</header>
+
+<main>
+<!-- ------------------------------------------------------------------ hero -->
+<section id="giris" style="border-bottom:1px solid var(--line)">
+  <div class="wrap">
+    <h1 data-i18n="hero.title">Termux'u kendi terminaline çevir.</h1>
+    <p class="lead" data-i18n="hero.lead">Mio, Termux'un linux-tm fork'u: menüden paket kur, dosyaları kod editöründe düzenle, komutları tek dokunuşla çalıştır. Kurulumlar doğrulanır, hata alırsan yarım bırakmaz.</p>
+    <div class="badges">
+      <span class="badge" id="badge-version"><span data-i18n="hero.version">sürüm</span> <b id="version-text">…</b></span>
+      <span class="badge"><b>android 7.0+</b> · arm64-v8a</span>
+      <span class="badge" data-i18n="hero.badge3">açık kaynak · GPLv3</span>
+    </div>
+    <div class="btns">
+      <a class="btn primary" id="download-btn" href="https://github.com/Mio-129/linux-tm/releases/latest" target="_blank" rel="noopener">
+        <span data-i18n="hero.download">APK indir</span> <span aria-hidden="true">↓</span>
+      </a>
+      <a class="btn" href="#kurulum" data-i18n="hero.howto">Nasıl kurulur?</a>
+      <a class="btn" href="https://github.com/Mio-129/linux-tm" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <div class="note" id="release-note" data-i18n="hero.releaseNote">En son sürüm GitHub Releases sayfasından indirilir; her yeni derlemede bağlantı güncel kalır.</div>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- kurulum -->
+<section id="kurulum">
+  <div class="wrap">
+    <h2 data-i18n="install.title">Kurulum</h2>
+    <p class="lead" data-i18n="install.lead">Beş adım, yaklaşık iki dakika. Telefonun arm64 (64 bit) olmalı; çoğu cihaz öyle.</p>
+
+    <ol class="steps">
+      <li>
+        <h3 data-i18n="install.s1.title">APK'yı indir</h3>
+        <p class="lead" style="margin:0" data-i18n="install.s1.body">Yukarıdaki "APK indir" düğmesi her zaman en son derlemeyi verir. Dosya adı <code>termux-app_apt-android-7-debug_arm64-v8a.apk</code>.</p>
+      </li>
+      <li>
+        <h3 data-i18n="install.s2.title">Bilinmeyen kaynağa izin ver</h3>
+        <p class="lead" style="margin:0" data-i18n="install.s2.body">APK'yı aç, Android "bu kaynaktan yüklemeye izin ver" derse izni ver. Play Store'daki Termux'u ayrıca silmen gerekmez.</p>
+      </li>
+      <li>
+        <h3 data-i18n="install.s3.title">Terminali aç, güncelle</h3>
+        <pre><code>pkg update -y &amp;&amp; pkg upgrade -y</code><button class="btn small copy" data-copy="pkg update -y &amp;&amp; pkg upgrade -y" data-i18n="copy">kopyala</button></pre>
+      </li>
+      <li>
+        <h3 data-i18n="install.s4.title">Menüyü aç</h3>
+        <p class="lead" style="margin:0" data-i18n="install.s4.body">Ses açma tuşuna <b>kısa</b> bas (uzun basınca Fn çalışır) ya da terminale <code>mio gui</code> yaz. Menüden paket kur, editörü aç, modül yükle.</p>
+      </li>
+      <li>
+        <h3 data-i18n="install.s5.title">Hazır paketleri kur (isteğe bağlı)</h3>
+        <p class="lead" style="margin:0" data-i18n="install.s5.body">Menü → Paketler → Older-Pack → Kur. Kurulum bir betikle yapılır, çıktısını terminalde görürsün.</p>
+        <pre><code>mio paket kur Older-Pack</code><button class="btn small copy" data-copy="mio paket kur Older-Pack" data-i18n="copy">kopyala</button></pre>
+      </li>
+    </ol>
+
+    <h3 style="margin-top:34px" data-i18n="install.faq.title">Sık takılanlar</h3>
+    <div class="grid">
+      <div class="card">
+        <span class="ico">$ apt</span>
+        <h3 data-i18n="faq.f1.h">Depo hatası veriyor</h3>
+        <p data-i18n="faq.f1.b">Depo listesi eskidir. <code>pkg update</code> sonra <code>termux-change-repo</code> ve uygun ayna seç.</p>
+      </div>
+      <div class="card">
+        <span class="ico">$ ls</span>
+        <h3 data-i18n="faq.f2.h">Dosyalarım nerede?</h3>
+        <p data-i18n="faq.f2.b">Ev klasörü <code>~</code>, yani <code>/data/data/com.termux/files/home</code>. Paketler <code>~/.mio/pkgs</code>.</p>
+      </div>
+      <div class="card">
+        <span class="ico">$ mio</span>
+        <h3 data-i18n="faq.f3.h">Bir şey çalışmıyor</h3>
+        <p data-i18n="faq.f3.b">Terminale <code>mio teshis</code> yaz: sürüm, klasörler, izinler ve son hata satırlarını listeler.</p>
+      </div>
+      <div class="card">
+        <span class="ico">^C</span>
+        <h3 data-i18n="faq.f4.h">Kurulum yarıda kaldı</h3>
+        <p data-i18n="faq.f4.b">Hata veren kurulum "kurulmuş" sayılmaz. Bağlantıyı düzeltip aynı düğmeye tekrar bas.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- özellikler -->
+<section id="ozellikler">
+  <div class="wrap">
+    <h2 data-i18n="feat.title">Neler var</h2>
+    <p class="lead" data-i18n="feat.lead">Hepsi menüden, klavye kısayolu ezberlemeden.</p>
+    <div class="grid">
+      <div class="card"><span class="ico">MI MENU</span><h3 data-i18n="feat.f1.h">Mio menü</h3><p data-i18n="feat.f1.b">Ses açma kısa basışı: paketler, projeler, X11, ayarlar, modüller tek panelde.</p></div>
+      <div class="card"><span class="ico">EDITOR</span><h3 data-i18n="feat.f2.h">Kod editörü</h3><p data-i18n="feat.f2.b">Satır numaraları, kod tuşları, kaydet; dosya türüne göre çalıştır (python, node, php, C, Java, shell).</p></div>
+      <div class="card"><span class="ico">PKGS</span><h3 data-i18n="feat.f3.h">Paketler</h3><p data-i18n="feat.f3.b"><code>.a.sh</code> → <code>.b.sh</code> aşamaları, doğrulama, log, tekrar başlatma ve uzaktan kurulum.</p></div>
+      <div class="card"><span class="ico">ZIP</span><h3 data-i18n="feat.f4.h">Modüller</h3><p data-i18n="feat.f4.b">ZeroTermux <code>INSTALL.txt</code> biçimindeki ZIP modülleri izinleriyle kurulur.</p></div>
+      <div class="card"><span class="ico">VNC</span><h3 data-i18n="feat.f5.h">VNC + X11</h3><p data-i18n="feat.f5.b">TigerVNC ve Xfce'yi menüden kur, masaüstünü telefondan aç.</p></div>
+      <div class="card"><span class="ico">ALIAS</span><h3 data-i18n="feat.f6.h">Alias'lar</h3><p data-i18n="feat.f6.b"><code>~/.bashrc</code>'deki alias'lar tek dokunuşla toplanır ve her oturumda geçerli olur.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------------- forum -->
+<section id="forum" style="border-bottom:none">
+  <div class="wrap">
+    <h2 data-i18n="forum.title">Forum</h2>
+    <p class="lead" data-i18n="forum.lead">Soru sor, kurulum deneyimini paylaş, hata bildir. Küfür/spam silinir.</p>
+
+    <div class="forum-top">
+      <button class="btn primary" id="new-thread-btn" data-i18n="forum.new">+ Yeni konu</button>
+      <button class="btn small" id="refresh-btn" data-i18n="forum.refresh">yenile</button>
+      <span class="spacer"></span>
+      <span class="badge" id="forum-mode">…</span>
+    </div>
+
+    <div class="banner hidden" id="forum-banner"></div>
+
+    <!-- thread list -->
+    <div id="thread-list-wrap">
+      <div id="thread-list"></div>
+      <p class="lead hidden" id="threads-empty" style="margin-top:16px" data-i18n="forum.empty">Henüz konu yok. İlk konuyu sen aç.</p>
+    </div>
+
+    <!-- thread detail -->
+    <div id="thread-detail" class="hidden">
+      <div style="margin-top:18px"><button class="btn small" id="back-btn" data-i18n="forum.back">← konular</button></div>
+      <div id="thread-header" style="margin-top:12px"></div>
+      <div id="post-list"></div>
+      <form class="pane" id="reply-form">
+        <h3 data-i18n="forum.reply">Yanıt yaz</h3>
+        <label for="reply-author" data-i18n="forum.name">Adın</label>
+        <input id="reply-author" maxlength="40" required autocomplete="nickname">
+        <label for="reply-body" data-i18n="forum.message">Mesajın</label>
+        <textarea id="reply-body" maxlength="4000" required></textarea>
+        <div class="btns"><button class="btn primary" type="submit" data-i18n="forum.send">Gönder</button></div>
+      </form>
+    </div>
+
+    <!-- new thread -->
+    <form class="pane hidden" id="thread-form">
+      <h3 data-i18n="forum.newTitle">Yeni konu</h3>
+      <label for="thread-title" data-i18n="forum.subject">Başlık</label>
+      <input id="thread-title" maxlength="120" required>
+      <label for="thread-author" data-i18n="forum.name">Adın</label>
+      <input id="thread-author" maxlength="40" required autocomplete="nickname">
+      <label for="thread-tag" data-i18n="forum.tag">Etiket</label>
+      <select id="thread-tag">
+        <option value="kurulum" data-i18n="tag.install">kurulum</option>
+        <option value="hata" data-i18n="tag.bug">hata</option>
+        <option value="ipucu" data-i18n="tag.tip">ipucu</option>
+        <option value="öneri" data-i18n="tag.idea">öneri</option>
+      </select>
+      <label for="thread-body" data-i18n="forum.message">Mesajın</label>
+      <textarea id="thread-body" maxlength="8000" required></textarea>
+      <div class="btns">
+        <button class="btn primary" type="submit" data-i18n="forum.publish">Yayınla</button>
+        <button class="btn" type="button" id="cancel-thread-btn" data-i18n="forum.cancel">Vazgeç</button>
+      </div>
+    </form>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© <span id="year">2026</span> Mio / linux-tm</span>
+    <span>·</span>
+    <a href="https://github.com/Mio-129/linux-tm" target="_blank" rel="noopener">GitHub</a>
+    <span>·</span>
+    <a href="https://github.com/Mio-129/linux-tm/releases" target="_blank" rel="noopener">Releases</a>
+    <span>·</span>
+    <span data-i18n="footer.note">Termux projesine dayanır, GPLv3.</span>
+  </div>
+</footer>
+
+<script>
+/* ============================================================================================
+   Yapılandırma / Configuration
+   --------------------------------------------------------------------------------------------
+   FORUM_API_BASE boş bırakılırsa forum "yerel demo" modunda çalışır: konular yalnızca bu
+   tarayıcıda (localStorage) saklanır. Gerçek, çok kullanıcılı forum için bir API adresi yaz,
+   örn: "https://mio-forum.example.workers.dev". Beklenen uçlar (docs/FORUM_API.md):
+
+     GET    /threads               -> {threads:[{id,title,author,tag,body,created,replies:[…]}]}
+     POST   /threads               <- {title,author,tag,body}      -> {thread:{…}}
+     POST   /threads/:id/replies   <- {author,body}                -> {thread:{…}}
+     OPTIONS (CORS)                -> Access-Control-Allow-*
+   ============================================================================================ */
+const FORUM_API_BASE = '';   // örn: 'https://mio-forum.ornek.workers.dev'
+const FORUM_LOCAL_KEY = 'mio_forum_threads_v1';
+const FORUM_NAME_KEY  = 'mio_forum_name';
+const LATEST_RELEASE  = 'https://github.com/Mio-129/linux-tm/releases/latest';
+const API_RELEASE     = 'https://api.github.com/repos/Mio-129/linux-tm/releases/latest';
+
+/* ------------------------------------------------------------------ i18n ------------------ */
+const I18N = {
+  tr: {
+    'nav.install':'Kurulum','nav.features':'Özellikler','nav.forum':'Forum',
+    'hero.title':"Termux'u kendi terminaline çevir.",
+    'hero.lead':"Mio, Termux'un linux-tm fork'u: menüden paket kur, dosyaları kod editöründe düzenle, komutları tek dokunuşla çalıştır. Kurulumlar doğrulanır, hata alırsan yarım bırakmaz.",
+    'hero.version':'sürüm','hero.badge3':'açık kaynak · GPLv3','hero.download':'APK indir',
+    'hero.howto':'Nasıl kurulur?',
+    'hero.releaseNote':'En son sürüm GitHub Releases sayfasından indirilir; her yeni derlemede bağlantı güncel kalır.',
+    'install.title':'Kurulum','install.lead':'Beş adım, yaklaşık iki dakika. Telefonun arm64 (64 bit) olmalı; çoğu cihaz öyle.',
+    'install.s1.title':"APK'yı indir",'install.s1.body':'Yukarıdaki "APK indir" düğmesi her zaman en son derlemeyi verir. Dosya adı <code>termux-app_apt-android-7-debug_arm64-v8a.apk</code>.',
+    'install.s2.title':'Bilinmeyen kaynağa izin ver','install.s2.body':"APK'yı aç, Android \"bu kaynaktan yüklemeye izin ver\" derse izni ver. Play Store'daki Termux'u ayrıca silmen gerekmez.",
+    'install.s3.title':'Terminali aç, güncelle',
+    'install.s4.title':'Menüyü aç','install.s4.body':'Ses açma tuşuna <b>kısa</b> bas (uzun basınca Fn çalışır) ya da terminale <code>mio gui</code> yaz. Menüden paket kur, editörü aç, modül yükle.',
+    'install.s5.title':'Hazır paketleri kur (isteğe bağlı)','install.s5.body':'Menü → Paketler → Older-Pack → Kur. Kurulum bir betikle yapılır, çıktısını terminalde görürsün.',
+    'install.faq.title':'Sık takılanlar',
+    'faq.f1.h':'Depo hatası veriyor','faq.f1.b':'Depo listesi eskidir. <code>pkg update</code> sonra <code>termux-change-repo</code> ve uygun ayna seç.',
+    'faq.f2.h':'Dosyalarım nerede?','faq.f2.b':'Ev klasörü <code>~</code>, yani <code>/data/data/com.termux/files/home</code>. Paketler <code>~/.mio/pkgs</code>.',
+    'faq.f3.h':'Bir şey çalışmıyor','faq.f3.b':'Terminale <code>mio teshis</code> yaz: sürüm, klasörler, izinler ve son hata satırlarını listeler.',
+    'faq.f4.h':'Kurulum yarıda kaldı','faq.f4.b':'Hata veren kurulum "kurulmuş" sayılmaz. Bağlantıyı düzeltip aynı düğmeye tekrar bas.',
+    'feat.title':'Neler var','feat.lead':'Hepsi menüden, klavye kısayolu ezberlemeden.',
+    'feat.f1.h':'Mio menü','feat.f1.b':'Ses açma kısa basışı: paketler, projeler, X11, ayarlar, modüller tek panelde.',
+    'feat.f2.h':'Kod editörü','feat.f2.b':'Satır numaraları, kod tuşları, kaydet; dosya türüne göre çalıştır (python, node, php, C, Java, shell).',
+    'feat.f3.h':'Paketler','feat.f3.b':'<code>.a.sh</code> → <code>.b.sh</code> aşamaları, doğrulama, log, tekrar başlatma ve uzaktan kurulum.',
+    'feat.f4.h':'Modüller','feat.f4.b':'ZeroTermux <code>INSTALL.txt</code> biçimindeki ZIP modülleri izinleriyle kurulur.',
+    'feat.f5.h':'VNC + X11','feat.f5.b':"TigerVNC ve Xfce'yi menüden kur, masaüstünü telefondan aç.",
+    'feat.f6.h':"Alias'lar",'feat.f6.b':"<code>~/.bashrc</code>'deki alias'lar tek dokunuşla toplanır ve her oturumda geçerli olur.",
+    'forum.title':'Forum','forum.lead':'Soru sor, kurulum deneyimini paylaş, hata bildir. Küfür/spam silinir.',
+    'forum.new':'+ Yeni konu','forum.refresh':'yenile','forum.empty':'Henüz konu yok. İlk konuyu sen aç.',
+    'forum.back':'← konular','forum.reply':'Yanıt yaz','forum.name':'Adın','forum.message':'Mesajın',
+    'forum.send':'Gönder','forum.newTitle':'Yeni konu','forum.subject':'Başlık','forum.tag':'Etiket',
+    'forum.publish':'Yayınla','forum.cancel':'Vazgeç',
+    'forum.mode.local':'yerel demo','forum.mode.api':'canlı API','forum.mode.offline':'çevrimdışı',
+    'forum.b.local':'Yerel demo: konular yalnızca bu tarayıcıda saklanıyor. Gerçek forum için <code>FORUM_API_BASE</code> ayarla (docs/FORUM_API.md).',
+    'forum.b.loading':'Konular yükleniyor…','forum.b.posting':'Gönderiliyor…',
+    'forum.b.sent':'Gönderildi.','forum.b.err':'Gönderilemedi: ','forum.b.loadErr':'Konular yüklenemedi: ',
+    'forum.replies':'yanıt','forum.noReplies':'Henüz yanıt yok, ilk yanıtı sen yaz.',
+    'tag.install':'kurulum','tag.bug':'hata','tag.tip':'ipucu','tag.idea':'öneri',
+    'copy':'kopyala','copied':'kopyalandı',
+    'footer.note':'Termux projesine dayanır, GPLv3.'
+  },
+  en: {
+    'nav.install':'Install','nav.features':'Features','nav.forum':'Forum',
+    'hero.title':'Turn Termux into your own terminal.',
+    'hero.lead':"Mio is the linux-tm fork of Termux: install packages from a menu, edit files in the code editor, run commands with one tap. Installs are verified and never left half done.",
+    'hero.version':'version','hero.badge3':'open source · GPLv3','hero.download':'Download APK',
+    'hero.howto':'How to install?',
+    'hero.releaseNote':'The latest build always comes from the GitHub Releases page, so the link stays current.',
+    'install.title':'Install','install.lead':'Five steps, about two minutes. Your phone must be arm64 (64-bit); almost all are.',
+    'install.s1.title':'Download the APK','install.s1.body':'The download button always gives the newest build. File name: <code>termux-app_apt-android-7-debug_arm64-v8a.apk</code>.',
+    'install.s2.title':'Allow unknown sources','install.s2.body':'Open the APK and allow installing from this source if Android asks. You do not have to uninstall the Play Store Termux.',
+    'install.s3.title':'Open the terminal and update',
+    'install.s4.title':'Open the menu','install.s4.body':'Press <b>volume up</b> briefly (long press stays Fn), or type <code>mio gui</code>. Install packages, open the editor, load modules.',
+    'install.s5.title':'Install a ready package (optional)','install.s5.body':'Menu → Packages → Older-Pack → Install. The install runs a script and you see its output in the terminal.',
+    'install.faq.title':'Common problems',
+    'faq.f1.h':'Repository error','faq.f1.b':'The package lists are stale. Run <code>pkg update</code>, then <code>termux-change-repo</code> and pick a mirror.',
+    'faq.f2.h':'Where are my files?','faq.f2.b':'Home is <code>~</code>, i.e. <code>/data/data/com.termux/files/home</code>. Packages live in <code>~/.mio/pkgs</code>.',
+    'faq.f3.h':'Something is broken','faq.f3.b':'Run <code>mio teshis</code>: it lists the version, folders, permissions and the last error lines.',
+    'faq.f4.h':'Install stopped halfway','faq.f4.b':'A failed install is not marked as installed. Fix the connection and press the same button again.',
+    'feat.title':'What is inside','feat.lead':'Everything from the menu, without memorising shortcuts.',
+    'feat.f1.h':'Mio menu','feat.f1.b':'Short volume-up press: packages, projects, X11, settings and modules in one panel.',
+    'feat.f2.h':'Code editor','feat.f2.b':'Line numbers, code keys, save, and run by file type (python, node, php, C, Java, shell).',
+    'feat.f3.h':'Packages','feat.f3.b':'<code>.a.sh</code> → <code>.b.sh</code> stages, verification, logs, re-runs and remote installs.',
+    'feat.f4.h':'Modules','feat.f4.b':'ZIP modules in the ZeroTermux <code>INSTALL.txt</code> format install with their permissions.',
+    'feat.f5.h':'VNC + X11','feat.f5.b':'Install TigerVNC and Xfce from the menu and open a desktop from your phone.',
+    'feat.f6.h':'Aliases','feat.f6.b':"Aliases from <code>~/.bashrc</code> are collected with one tap and apply to every session.",
+    'forum.title':'Forum','forum.lead':'Ask questions, share install notes, report bugs. Spam and abuse are removed.',
+    'forum.new':'+ New thread','forum.refresh':'refresh','forum.empty':'No threads yet. Start the first one.',
+    'forum.back':'← threads','forum.reply':'Write a reply','forum.name':'Your name','forum.message':'Your message',
+    'forum.send':'Send','forum.newTitle':'New thread','forum.subject':'Subject','forum.tag':'Tag',
+    'forum.publish':'Publish','forum.cancel':'Cancel',
+    'forum.mode.local':'local demo','forum.mode.api':'live API','forum.mode.offline':'offline',
+    'forum.b.local':'Local demo: threads are stored in this browser only. Set <code>FORUM_API_BASE</code> for a real forum (docs/FORUM_API.md).',
+    'forum.b.loading':'Loading threads…','forum.b.posting':'Posting…',
+    'forum.b.sent':'Posted.','forum.b.err':'Could not post: ','forum.b.loadErr':'Could not load threads: ',
+    'forum.replies':'replies','forum.noReplies':'No replies yet — write the first one.',
+    'tag.install':'install','tag.bug':'bug','tag.tip':'tip','tag.idea':'idea',
+    'copy':'copy','copied':'copied',
+    'footer.note':'Built on the Termux project, GPLv3.'
+  }
+};
+
+let LANG = 'tr';
+function t(key){ return (I18N[LANG] && I18N[LANG][key]) || (I18N.tr[key] || key); }
+
+function setLang(lang){
+  LANG = I18N[lang] ? lang : 'tr';
+  document.documentElement.lang = LANG;
+  try { localStorage.setItem('mio_lang', LANG); } catch (e) {}
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (I18N[LANG][key] !== undefined) el.innerHTML = I18N[LANG][key];
+  });
+  document.querySelectorAll('.copy').forEach(btn => {
+    if (btn.dataset.copied !== '1') btn.textContent = t('copy');
+  });
+  document.getElementById('lang-tr').setAttribute('aria-pressed', String(LANG === 'tr'));
+  document.getElementById('lang-en').setAttribute('aria-pressed', String(LANG === 'en'));
+  renderForumMarks();
+}
+
+/* ------------------------------------------------------------- utilities ------------------ */
+function escapeHtml(value){
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function fmtDate(iso){
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function toast(message){
+  const el = document.getElementById('forum-banner');
+  el.className = 'banner';
+  el.innerHTML = message;
+  el.classList.remove('hidden');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => el.classList.add('hidden'), 4500);
+}
+function note(message, kind){
+  const el = document.getElementById('forum-banner');
+  el.className = 'banner ' + (kind || '');
+  el.innerHTML = message;
+  el.classList.remove('hidden');
+}
+
+/* ------------------------------------------------------------------- copy ------------------ */
+document.addEventListener('click', async (event) => {
+  const btn = event.target.closest('.copy');
+  if (!btn) return;
+  const text = btn.dataset.copy || (btn.previousElementSibling && btn.previousElementSibling.innerText) || '';
+  try {
+    await navigator.clipboard.writeText(text.trim());
+  } catch (e) {
+    const area = document.createElement('textarea');
+    area.value = text.trim();
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand('copy'); } catch (e2) {}
+    document.body.removeChild(area);
+  }
+  btn.textContent = t('copied');
+  btn.dataset.copied = '1';
+  setTimeout(() => { btn.textContent = t('copy'); delete btn.dataset.copied; }, 1600);
+});
+
+/* ------------------------------------------------------------- latest release -------------- */
+async function loadRelease(){
+  const versionEl = document.getElementById('version-text');
+  try {
+    const response = await fetch(API_RELEASE, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const release = await response.json();
+    const name = (release.tag_name || release.name || '').replace(/^debug-arena-/, '');
+    versionEl.textContent = name || '—';
+    const apk = (release.assets || []).find(a => /arm64-v8a\.apk$/.test(a.name));
+    const button = document.getElementById('download-btn');
+    if (apk && apk.browser_download_url) {
+      button.href = apk.browser_download_url;
+      button.removeAttribute('target');
+    } else {
+      button.href = release.html_url;
+    }
+    button.title = (apk ? apk.name : release.tag_name || '') + ' · ' + (apk && apk.size ? Math.round(apk.size / 1048576) + ' MB' : '');
+  } catch (error) {
+    versionEl.textContent = 'son sürüm';
+    document.getElementById('download-btn').href = LATEST_RELEASE;
+  }
+}
+
+/* ============================================================================================
+   Forum
+   ============================================================================================ */
+const state = { threads: [], current: null };
+
+function localThreads(){
+  try { return JSON.parse(localStorage.getItem(FORUM_LOCAL_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveLocalThreads(threads){
+  try { localStorage.setItem(FORUM_LOCAL_KEY, JSON.stringify(threads)); } catch (e) {}
+}
+function newId(){ return String(Date.now()) + '-' + Math.random().toString(36).slice(2, 7); }
+
+async function apiCall(path, options){
+  const base = FORUM_API_BASE.replace(/\/$/, '');
+  const response = await fetch(base + path, Object.assign({
+    headers: { 'Content-Type': 'application/json' }
+  }, options || {}));
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return response.json();
+}
+
+function forumMode(){
+  if (!FORUM_API_BASE) return 'local';
+  return navigator.onLine === false ? 'offline' : 'api';
+}
+
+function renderForumMarks(){
+  const mode = forumMode();
+  document.getElementById('forum-mode').innerHTML =
+    (mode === 'local' ? '● ' : '◉ ') + t('forum.mode.' + mode);
+  if (mode === 'local') note(t('forum.b.local'), 'warn');
+}
+
+async function loadThreads(){
+  const list = document.getElementById('thread-list');
+  const empty = document.getElementById('threads-empty');
+  renderForumMarks();
+
+  try {
+    if (FORUM_API_BASE) {
+      const data = await apiCall('/threads', { cache: 'no-store' });
+      state.threads = Array.isArray(data.threads) ? data.threads : [];
+    } else {
+      state.threads = localThreads();
+    }
+  } catch (error) {
+    // The API is unreachable: fall back to the local cache so the page still works
+    state.threads = localThreads();
+    note(t('forum.b.loadErr') + escapeHtml(error.message) + ' — ' + t('forum.mode.local'), 'err');
+  }
+
+  state.threads.sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
+
+  if (!state.threads.length) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  list.innerHTML = state.threads.map(thread => {
+    const replies = (thread.replies || []).length;
+    return '<button class="thread" type="button" data-id="' + escapeHtml(thread.id) + '">'
+      + '<div class="t">' + escapeHtml(thread.title) + '</div>'
+      + '<div class="m">'
+      + '<span><b>' + escapeHtml(thread.author || '?') + '</b></span>'
+      + '<span>' + escapeHtml(fmtDate(thread.created)) + '</span>'
+      + (thread.tag ? '<span class="tag">' + escapeHtml(thread.tag) + '</span>' : '')
+      + '<span>' + replies + ' ' + t('forum.replies') + '</span>'
+      + '</div></button>';
+  }).join('');
+
+  list.querySelectorAll('.thread').forEach(button => {
+    button.addEventListener('click', () => openThread(button.dataset.id));
+  });
+}
+
+function openThread(id){
+  const thread = state.threads.find(item => String(item.id) === String(id));
+  if (!thread) return;
+  state.current = thread;
+
+  document.getElementById('thread-list-wrap').classList.add('hidden');
+  document.getElementById('thread-form').classList.add('hidden');
+  document.getElementById('thread-detail').classList.remove('hidden');
+
+  document.getElementById('thread-header').innerHTML =
+    '<h2>' + escapeHtml(thread.title) + '</h2>'
+    + '<div class="m" style="color:var(--dim);font-size:13px">'
+    + '<b>' + escapeHtml(thread.author || '?') + '</b> · ' + escapeHtml(fmtDate(thread.created))
+    + (thread.tag ? ' · <span class="tag">' + escapeHtml(thread.tag) + '</span>' : '')
+    + '</div>';
+
+  const first = '<div class="post"><div class="who"><b>' + escapeHtml(thread.author || '?')
+    + '</b> · ' + escapeHtml(fmtDate(thread.created)) + '</div><div class="body">'
+    + escapeHtml(thread.body) + '</div></div>';
+
+  const replies = (thread.replies || []).map(reply =>
+    '<div class="post"><div class="who"><b>' + escapeHtml(reply.author || '?') + '</b> · '
+    + escapeHtml(fmtDate(reply.created)) + '</div><div class="body">'
+    + escapeHtml(reply.body) + '</div></div>'
+  ).join('');
+
+  const none = (thread.replies || []).length ? '' :
+    '<p class="lead" style="margin-top:12px">' + t('forum.noReplies') + '</p>';
+
+  document.getElementById('post-list').innerHTML = first + replies + none;
+  const replyAuthor = document.getElementById('reply-author');
+  if (!replyAuthor.value) {
+    try { replyAuthor.value = localStorage.getItem(FORUM_NAME_KEY) || ''; } catch (e) {}
+  }
+  window.scrollTo({ top: document.getElementById('forum').offsetTop, behavior: 'smooth' });
+}
+
+function showList(){
+  state.current = null;
+  document.getElementById('thread-detail').classList.add('hidden');
+  document.getElementById('thread-list-wrap').classList.remove('hidden');
+  loadThreads();
+}
+
+function showThreadForm(show){
+  document.getElementById('thread-form').classList.toggle('hidden', !show);
+  document.getElementById('thread-list-wrap').classList.toggle('hidden', show);
+  document.getElementById('thread-detail').classList.add('hidden');
+  if (show) {
+    const author = document.getElementById('thread-author');
+    if (!author.value) {
+      try { author.value = localStorage.getItem(FORUM_NAME_KEY) || ''; } catch (e) {}
+    }
+    document.getElementById('thread-title').focus();
+    window.scrollTo({ top: document.getElementById('forum').offsetTop, behavior: 'smooth' });
+  }
+}
+
+async function createThread(event){
+  event.preventDefault();
+  const title = document.getElementById('thread-title').value.trim();
+  const author = document.getElementById('thread-author').value.trim();
+  const tag = document.getElementById('thread-tag').value;
+  const body = document.getElementById('thread-body').value.trim();
+  if (!title || !author || !body) return;
+
+  try { localStorage.setItem(FORUM_NAME_KEY, author); } catch (e) {}
+  note(t('forum.b.posting'));
+
+  const thread = { id: newId(), title, author, tag, body, created: new Date().toISOString(), replies: [] };
+
+  if (FORUM_API_BASE) {
+    try {
+      const data = await apiCall('/threads', { method: 'POST', body: JSON.stringify({ title, author, tag, body }) });
+      if (data && data.thread) Object.assign(thread, data.thread);
+    } catch (error) {
+      note(t('forum.b.err') + escapeHtml(error.message), 'err');
+      return;
+    }
+  } else {
+    const threads = localThreads();
+    threads.push(thread);
+    saveLocalThreads(threads);
+  }
+
+  document.getElementById('thread-form').reset();
+  state.threads.unshift(thread);
+  showList();
+  toast(t('forum.b.sent'));
+  openThread(thread.id);
+}
+
+async function sendReply(event){
+  event.preventDefault();
+  if (!state.current) return;
+  const author = document.getElementById('reply-author').value.trim();
+  const body = document.getElementById('reply-body').value.trim();
+  if (!author || !body) return;
+
+  try { localStorage.setItem(FORUM_NAME_KEY, author); } catch (e) {}
+  note(t('forum.b.posting'));
+
+  const reply = { id: newId(), author, body, created: new Date().toISOString() };
+  const thread = state.current;
+
+  if (FORUM_API_BASE) {
+    try {
+      const data = await apiCall('/threads/' + encodeURIComponent(thread.id) + '/replies',
+        { method: 'POST', body: JSON.stringify({ author, body }) });
+      if (data && data.thread) {
+        state.current = data.thread;
+        state.threads = state.threads.map(item => String(item.id) === String(data.thread.id) ? data.thread : item);
+      } else {
+        thread.replies = (thread.replies || []).concat([reply]);
+      }
+    } catch (error) {
+      note(t('forum.b.err') + escapeHtml(error.message), 'err');
+      return;
+    }
+  } else {
+    thread.replies = (thread.replies || []).concat([reply]);
+    const threads = localThreads().map(item => String(item.id) === String(thread.id) ? thread : item);
+    if (!threads.some(item => String(item.id) === String(thread.id))) threads.push(thread);
+    saveLocalThreads(threads);
+  }
+
+  document.getElementById('reply-body').value = '';
+  openThread(state.current.id);
+  toast(t('forum.b.sent'));
+}
+
+/* ------------------------------------------------------------------- boot ------------------ */
+document.getElementById('year').textContent = String(new Date().getFullYear());
+document.getElementById('new-thread-btn').addEventListener('click', () => showThreadForm(true));
+document.getElementById('cancel-thread-btn').addEventListener('click', () => { document.getElementById('thread-form').reset(); showList(); });
+document.getElementById('refresh-btn').addEventListener('click', () => { showList(); });
+document.getElementById('back-btn').addEventListener('click', () => showList());
+document.getElementById('thread-form').addEventListener('submit', createThread);
+document.getElementById('reply-form').addEventListener('submit', sendReply);
+window.addEventListener('online', renderForumMarks);
+window.addEventListener('offline', renderForumMarks);
+
+try {
+  const saved = localStorage.getItem('mio_lang');
+  if (saved && I18N[saved]) LANG = saved;
+} catch (e) {}
+
+setLang(LANG);
+loadRelease();
+loadThreads();
+</script>
+</body>
+</html>

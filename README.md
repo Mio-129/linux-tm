@@ -203,6 +203,10 @@ mio paket log Older-Pack   # show the log of the last run
   `$`, `#`, `_`, `&&`), **Kaydet**, **Çalıştır** and **Kapat** (asks before discarding changes).
   Reachable from **Paketler > Düzenle** and from **Terminal araçları > Kod editörü**; it can also
   create a new file.
+- **Satır numaraları:** the editor has a gutter with the line numbers, which scrolls together with the
+  text and follows the line height of the editor (`1·2·3` key in the code key row hides/shows it and the
+  choice is remembered in the `mio_editor` preferences). Soft wrapping is off, so one line of the file is
+  exactly one line of the gutter.
 - The **Çalıştır** button picks the command from the file type, and its label says which one:
   `.sh` is run with `sh`, a shell configuration file (`.bashrc`, `.profile`, ...) or **any file with
   an `alias` line is sourced** (`. dosya`), `.py` runs with `python`/`python3`, `.js` with `node`,
@@ -525,3 +529,22 @@ Commit messages **must** use the [Conventional Commits](https://www.conventional
 
 [<img alt="Cloudflare" width="25%" src="site/assets/sponsors/cloudflare.png" />](https://www.cloudflare.com)  
 *[Cloudflare](https://www.cloudflare.com) ([1](https://packages-cf.termux.dev))*
+
+## Kurulum sitesi ve forum (`docs/index.html`)
+
+`docs/index.html` tek dosyalık, bağımlılıksız bir site: kurulum adımları, özellik listesi ve forum.
+GitHub Pages için hazır (Settings → Pages → branch `master`/bu dal, klasör `/docs`), ya da herhangi bir
+statik sunucuda açılabilir.
+
+- **Diller:** Türkçe / İngilizce (sağ üstteki `TR`/`EN`, seçim `localStorage`'da saklanır).
+- **APK:** "En son sürüm"e bağlanır (`releases/latest`), sürüm numarası ve APK boyutu GitHub API'den
+  okunur; API'ye erişilemezse bağlantı yine çalışır.
+- **Forum:** `FORUM_API_BASE` boşsa *yerel demo* (konular yalnızca o tarayıcıda); bir API adresi
+  yazılırsa *canlı* (herkes görür). Uçlar ve doğrulama kuralları: `docs/FORUM_API.md`,
+  çalışan bir Cloudflare Workers örneği: `docs/forum-worker.js`. Arayüz HTML kaçışlar, yani
+  gönderilerdeki HTML çalışmaz.
+
+```sh
+# yerel önizleme
+python3 -m http.server 8000 --directory docs
+```
