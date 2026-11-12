@@ -338,6 +338,21 @@ public final class MioMenuActivity extends Activity {
         addButton(toolsRow2, "Teşhis", v -> runCommand("mio teshis"));
         mRoot.addView(toolsRow2);
 
+        // ------------------------------------------------------------- ZeroTermux araçları ----
+        addSection("Konteyner, QEMU, görevler");
+
+        LinearLayout ztRow1 = newRow();
+        addButton(ztRow1, "Konteyner", v -> showContainerDialog());
+        addButton(ztRow1, "QEMU", v -> showQemuDialog());
+        addButton(ztRow1, "X11 başlat", v -> runCommand("termux-x11 :0 &"));
+        mRoot.addView(ztRow1);
+
+        LinearLayout ztRow2 = newRow();
+        addButton(ztRow2, "Zamanlanmış görev", v -> showCronDialog());
+        addButton(ztRow2, "Yedeği geri yükle", v -> showRestoreDialog());
+        addButton(ztRow2, "Beautify sıfırla", v -> confirmResetBeautify());
+        mRoot.addView(ztRow2);
+
         // ------------------------------------------------------------------------ close -----
         LinearLayout closeRow = newRow();
         addButton(closeRow, "Kapat", v -> finish());
@@ -407,6 +422,127 @@ public final class MioMenuActivity extends Activity {
 
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* ZeroTermux ek özellikleri                                                              */
+    /* -------------------------------------------------------------------------------------- */
+
+    /** Konteyner (proot-distro) komutları: liste, kur, gir. */
+    private void showContainerDialog() {
+        final String[] items = new String[]{
+            "Kurulu dağıtımları listele",
+            "Debian kur (proot-distro)",
+            "Debian'a gir",
+            "Ubuntu kur (proot-distro)",
+            "Ubuntu'ya gir",
+            "proot-distro kur"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("Konteyner (proot-distro)")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: runCommand("proot-distro list"); break;
+                    case 1: runCommand("pkg install -y proot-distro >/dev/null 2>&1; proot-distro install debian"); break;
+                    case 2: runCommand("proot-distro login debian"); break;
+                    case 3: runCommand("pkg install -y proot-distro >/dev/null 2>&1; proot-distro install ubuntu"); break;
+                    case 4: runCommand("proot-distro login ubuntu"); break;
+                    default: runCommand("pkg install -y proot-distro"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** QEMU (sanal makine) komutları. */
+    private void showQemuDialog() {
+        final String[] items = new String[]{
+            "QEMU x86_64 kur",
+            "QEMU sürümünü göster",
+            "Kurulum klasörünü göster (~/qemu)"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("QEMU sanal makine")
+            .setMessage("QEMU ile başka bir sistemin ISO'sunu çalıştırabilirsin.")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: runCommand("pkg install -y qemu-system-x86-64-headless qemu-utils"); break;
+                    case 1: runCommand("qemu-system-x86_64 --version 2>&1 | head -3"); break;
+                    default: runCommand("mkdir -p ~/qemu && ls -l ~/qemu"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Zamanlanmış görevler (cronie) için komutlar. */
+    private void showCronDialog() {
+        final String[] items = new String[]{
+            "crond kur ve başlat",
+            "Görevleri düzenle (crontab -e)",
+            "Görevleri listele (crontab -l)",
+            "crond'u durdur"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("Zamanlanmış görevler")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: runCommand("pkg install -y cronie >/dev/null 2>&1; crond; pgrep crond || crond"); break;
+                    case 1: runCommand("crontab -e"); break;
+                    case 2: runCommand("crontab -l"); break;
+                    default: runCommand("pkill crond"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Yedek dosyalarını listele ve seçileni geri yükle. */
+    private void showRestoreDialog() {
+        final File home = new File("/data/data/com.termux/files/home");
+        final File[] files = home.listFiles((dir, name) ->
+            name.startsWith("termux-yedek-") && name.endsWith(".tar.gz"));
+        if (files == null || files.length == 0) {
+            toast("Yedek bulunamadı. Önce Yedekle'ye bas.");
+            return;
+        }
+        final String[] names = new String[files.length];
+        for (int i = 0; i < files.length; i++) names[i] = files[i].getName();
+
+        new AlertDialog.Builder(this)
+            .setTitle("Yedeği geri yükle")
+            .setItems(names, (dialog, which) -> {
+                final String name = names[which];
+                new AlertDialog.Builder(this)
+                    .setTitle("Geri yüklensin mi?")
+                    .setMessage(name + "\n\nMevcut home ve usr klasörlerinin üzerine yazılır.")
+                    .setPositiveButton(R.string.mio_menu_apply,
+                        (d, w) -> runCommand("tar -xzf ~/" + name + " -C /data/data/com.termux/files"))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Bütün beautify ayarlarını (medya, animasyon, renkler, yazı) varsayılana döndür. */
+    private void confirmResetBeautify() {
+        new AlertDialog.Builder(this)
+            .setTitle("Beautify sıfırla")
+            .setMessage("Arka plan medyası, animasyonlar ve renkler varsayılana döner. Yazı boyutu korunur.")
+            .setPositiveButton(R.string.mio_menu_apply, (dialog, which) -> {
+                MioMediaBackgroundView view = MioMediaBackgroundView.getInstance();
+                if (view != null) {
+                    view.setAnimationMode(MioParticleView.Mode.NONE);
+                    MioCommandManager.getInstance(this).onAnimationModeChanged(MioParticleView.Mode.NONE);
+                }
+                MioCommandManager.getInstance(this).clearWallpaper();
+                MioTextStyle.resetColors(this);
+                toast("Beautify ayarları sıfırlandı.");
+                buildPanel();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     private void toast(@NonNull String message) {
