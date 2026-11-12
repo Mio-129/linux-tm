@@ -227,12 +227,64 @@ pkg_list() {
             fi
         fi
         pkg_is_enabled "$name" || state="$state • kapalı"
+        [ -f "$dir/URL" ] && state="$state • uzaktan"
         printf '  %-20s %s\n' "$name" "$state"
         for script in "$dir"/*.sh; do
             [ -f "$script" ] || continue
             printf '      %s\n' "${script##*/}"
         done
     done
+}
+
+# Paketin URL dosyası varsa uzak betiği çalıştırır (bash <(curl -s URL))
+pkg_url() {
+    file="$PKG_DIR/$1/URL"
+    [ -f "$file" ] && head -n 1 "$file" | tr -d '\r'
+}
+
+pkg_install_remote() {
+    dir=$(pkg_find "$1") || {
+        printf 'mio: paket bulunamadı: %s\n' "$1" >&2
+        return 1
+    }
+    name=${dir##*/}
+    url=$(pkg_url "$name")
+    if [ -z "$url" ]; then
+        return 2
+    fi
+    mkdir -p "$PKG_STATE_DIR" 2>/dev/null
+    printf 'Paket kuruluyor (uzaktan): %s\nKaynak: %s\n' "$name" "$url"
+    printf '> bash <(curl -s %s)\n' "$url"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        printf 'mio: curl kuruluyor...\n'
+        pkg install -y curl >/dev/null 2>&1 || {
+            printf 'mio: curl kurulamadı.\n' >&2
+            return 1
+        }
+    fi
+
+    # Betik indirilip çalıştırılır; boru yerine dosya kullanılıyor ki çıkış kodu doğru olsun
+    script="$HOME/.mio/tmp-remote-$$.sh"
+    if ! curl -fsSL "$url" -o "$script"; then
+        printf 'mio: betik indirilemedi: %s\n' "$url" >&2
+        rm -f "$script"
+        return 1
+    fi
+
+    bash "$script"
+    status=$?
+    rm -f "$script"
+
+    if [ $status -ne 0 ]; then
+        printf 'mio: betik hata verdi (çıkış kodu %s), paket kurulmadı.\n' "$status" >&2
+        return $status
+    fi
+
+    version=$(pkg_version "$name")
+    printf '%s\n' "${version:-1}" > "$PKG_STATE_DIR/$name.installed"
+    printf 'Paket kuruldu: %s%s\n' "$name" "${version:+ (v$version)}"
+    return 0
 }
 
 pkg_install() {
@@ -242,6 +294,12 @@ pkg_install() {
         return 1
     }
     name=${dir##*/}
+    url=$(pkg_url "$name")
+    if [ -n "$url" ]; then
+        pkg_install_remote "$name"
+        return $?
+    fi
+
     mkdir -p "$PKG_STATE_DIR" "$PKG_LOG_DIR" 2>/dev/null
     log="$PKG_LOG_DIR/$name.log"
 
@@ -346,8 +404,10 @@ MIO_EOF
         chmod +x "$dir/Older-Pack.start-up.sh"
     fi
     [ -f "$dir/VERSION" ] || printf '1\n' > "$dir/VERSION"
+    [ -f "$dir/URL" ] || printf '%s\n' \
+        "https://raw.githubusercontent.com/Mio-129/tm-pkg/refs/heads/main/older-pack" > "$dir/URL"
     printf 'Örnek paket hazır: %s\n' "$dir"
-    printf 'Dosyalar: Older-Pack.a.sh, Older-Tool.b.sh, Older-Pack.start-up.sh, VERSION\n'
+    printf 'Dosyalar: URL, Older-Pack.a.sh, Older-Tool.b.sh, Older-Pack.start-up.sh, VERSION\n'
 }
 
 pkg_log() {

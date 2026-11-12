@@ -168,6 +168,7 @@ the package tiers of ZeroTermux. A package is a folder below `~/.mio/pkgs/<paket
 
 | File | Meaning |
 | --- | --- |
+| `URL` | the remote install script, run as `bash <(curl -s <url>)` (takes precedence over the scripts below) |
 | `<paket>.a.sh` | the first script, **Older-Pack** - the installation itself |
 | `<paket>.b.sh` | the second script, **Older-Tool** - only run after `.a.sh` succeeded |
 | `<paket>.c.sh`, ... | further steps, run in letter order |
@@ -176,13 +177,19 @@ the package tiers of ZeroTermux. A package is a folder below `~/.mio/pkgs/<paket
 
 ```sh
 mio paket                  # list the packages and their state
-mio paket kur Older-Pack   # run .a.sh, then .b.sh, mark the package installed
+mio paket kur Older-Pack   # run the URL script if there is one, otherwise .a.sh then .b.sh
 mio paket guncelle         # install every package with a new VERSION
 mio paket baslat           # run the .start-up.sh scripts of the installed packages
 mio paket sifirla          # create the example Older-Pack package
 mio paket log Older-Pack   # show the log of the last run
 ```
 
+- **Remote install:** if the package has a `URL` file, `Kur` / `Güncelle` (and `mio paket kur`) run
+  that script in the terminal with `bash <(curl -s <url>)`, so the `pkg install` progress is visible
+  and interactive input works. Older-Pack points to
+  `https://raw.githubusercontent.com/Mio-129/tm-pkg/refs/heads/main/older-pack`. The script is
+  downloaded to `~/.mio/tmp-remote-$$.sh` first, so a failed download or a non zero exit code leaves
+  the package **not** marked as installed. Without a `URL` file the local `.a.sh`/`.b.sh` scripts run.
 - A failing `.a.sh` stops the run: `.b.sh` is **not** executed and the package is not marked as
   installed, so a broken first stage never looks like a successful install.
 - The state lives in `~/.mio/state/` (`<paket>.installed`, `<paket>.disabled`) and the output of the

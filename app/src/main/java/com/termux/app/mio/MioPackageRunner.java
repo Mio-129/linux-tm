@@ -263,6 +263,10 @@ public final class MioPackageRunner {
     /** The name of the template package that the menu creates for the user. */
     public static final String TEMPLATE_NAME = "Older-Pack";
 
+    /** The remote install script of the Older-Pack template package. */
+    public static final String TEMPLATE_URL =
+        "https://raw.githubusercontent.com/Mio-129/tm-pkg/refs/heads/main/older-pack";
+
     /**
      * Create the example package of the menu: the `Older-Pack` folder with the `Older-Pack.a.sh`,
      * `Older-Tool.b.sh` and `Older-Pack.start-up.sh` scripts described by the package section of the
@@ -280,6 +284,7 @@ public final class MioPackageRunner {
         writeTemplateFile(new File(directory, TEMPLATE_NAME + MioPackages.SCRIPT_A_SUFFIX), TEMPLATE_A_SCRIPT);
         writeTemplateFile(new File(directory, "Older-Tool" + MioPackages.SCRIPT_B_SUFFIX), TEMPLATE_B_SCRIPT);
         writeTemplateFile(new File(directory, TEMPLATE_NAME + MioPackages.STARTUP_SUFFIX), TEMPLATE_STARTUP_SCRIPT);
+        writeTemplateFile(new File(directory, "URL"), TEMPLATE_URL + "\n");
         writeTemplateFile(new File(directory, "VERSION"), "1\n");
 
         for (MioPackages.Package pkg : MioPackages.getPackages()) {

@@ -61,6 +61,13 @@ public final class MioPackages {
     /** The suffix of the start-up script of a package, run on every start of the app. */
     public static final String STARTUP_SUFFIX = ".start-up.sh";
 
+    /**
+     * The key of the `URL` file of a package: if it is set, the installation of the package is the
+     * script at that address, run with `bash <(curl -s <url>)` in the terminal, like the
+     * `https://raw.githubusercontent.com/Mio-129/tm-pkg/main/older-pack` script of Older-Pack.
+     */
+    public static final String URL_FILE_NAME = "URL";
+
     private MioPackages() {
     }
 
@@ -193,6 +200,22 @@ public final class MioPackages {
             return !version.equals(installed);
         }
 
+        /** The remote install script of the package from its `URL` file, {@code null} if none. */
+        @Nullable
+        public String getRemoteUrl() {
+            File urlFile = new File(directory, URL_FILE_NAME);
+            if (!urlFile.isFile()) return null;
+            String url = readFile(urlFile);
+            if (url == null) return null;
+            url = url.trim();
+            return url.isEmpty() ? null : url;
+        }
+
+        /** If the package is installed by running a remote script instead of its local scripts. */
+        public boolean hasRemoteInstall() {
+            return getRemoteUrl() != null;
+        }
+
         /** The start-up script of the package, {@code null} if it has none. */
         @Nullable
         public Script getStartUpScript() {
@@ -257,6 +280,7 @@ public final class MioPackages {
                 summary.append(" — kurulmadı");
             }
             if (!isEnabled()) summary.append(" • kapalı");
+            if (hasRemoteInstall()) summary.append(" • uzaktan");
             return summary.toString();
         }
     }

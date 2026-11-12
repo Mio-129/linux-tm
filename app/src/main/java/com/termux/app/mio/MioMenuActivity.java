@@ -477,8 +477,8 @@ public final class MioMenuActivity extends Activity {
             if (selected != null) {
                 LinearLayout packageActionRow = newRow();
                 addButton(packageActionRow, selected.isInstalled() ? "Yeniden kur" : "Kur",
-                    v -> runPackage(selected, false));
-                addButton(packageActionRow, "Güncelle", v -> runPackage(selected, true));
+                    v -> installPackageRemotely(selected));
+                addButton(packageActionRow, "Güncelle", v -> installPackageRemotely(selected));
                 addButton(packageActionRow, "Başlangıç", v -> runPackageStartUp(selected));
                 mRoot.addView(packageActionRow);
 
@@ -489,6 +489,9 @@ public final class MioMenuActivity extends Activity {
                 addButton(packageActionRow2, "Düzenle", v -> showPackageEditor(selected));
                 addButton(packageActionRow2, "Klasör", v -> showPackageFolder(selected));
                 mRoot.addView(packageActionRow2);
+
+                String remoteUrl = selected.getRemoteUrl();
+                if (remoteUrl != null) addText("Kurulum kaynağı: " + remoteUrl);
 
                 String logTail = selected.getLogTail(3);
                 if (!logTail.isEmpty()) addText("Son çalıştırma:\n" + logTail);
@@ -706,6 +709,46 @@ public final class MioMenuActivity extends Activity {
     private void selectPackage(@NonNull String name) {
         mSelectedPackage = name;
         buildPanel();
+    }
+
+    /**
+     * Install the package by running its remote script in the terminal.
+     *
+     * A package with a `URL` file (like Older-Pack, whose URL is
+     * `https://raw.githubusercontent.com/Mio-129/tm-pkg/main/older-pack`) is installed with
+     * `bash <(curl -s <url>)`, so that the output is shown in the terminal and the user can see the
+     * `pkg install` progress. The version is marked as installed right away, since the script runs in
+     * the terminal and the panel cannot wait for it.
+     */
+    private void installPackageRemotely(@NonNull MioPackages.Package pkg) {
+        final String url = pkg.getRemoteUrl();
+        if (url == null) {
+            // Without a URL the local scripts of the package are run
+            runPackage(pkg, true);
+            return;
+        }
+
+        final String command = "pkg install -y curl >/dev/null 2>&1; bash <(curl -s "
+            + MioPackages.quote(url) + ")";
+
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — kur")
+            .setMessage("Terminalde şu komut çalışacak:\n\n" + command
+                + "\n\nÇıktı terminalde görünecek.\nKaynak: " + url)
+            .setPositiveButton("Kur", (dialog, which) -> {
+                pkg.setInstalledVersion(pkg.getVersion() == null ? "1" : pkg.getVersion());
+                runCommand(command);
+            })
+            .setNeutralButton("Komutu kopyala", (dialog, which) -> {
+                android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mio", command));
+                    toast("Komut kopyalandı.");
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     /** Install a package (or update it), then show the result. */
