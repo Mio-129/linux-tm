@@ -96,6 +96,16 @@
             android:resizeableActivity="true"
             tools:targetApi="n" />
 
+        <!-- The Mio panel of this fork (background media, animations, audio, colors, tools) -->
+        <activity
+            android:name=".app.mio.MioMenuActivity"
+            android:exported="false"
+            android:label="@string/mio_menu_title"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboard|keyboardHidden|navigation"
+            android:theme="@style/Theme.MioMenu"
+            android:resizeableActivity="true"
+            tools:targetApi="n" />
+
         <activity
             android:name=".app.activities.SettingsActivity"
             android:exported="true"
