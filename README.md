@@ -140,9 +140,19 @@ mio yardim             # help
   the app preferences and restored on the next start.
 - The menu is also reachable from the terminal long press menu (**Mio menu**, **Snow animation**,
   **Particle animation**) and from the **Mio menu** button at the top of the session drawer.
+- The panel is a **separate activity** (`MioMenuActivity`), not a dialog: it is a scrollable column
+  of sections like the side menu of ZeroTermux, it stays open while a button is pressed and it keeps
+  its scroll position, so a short screen cannot hide the list. Every button rebuilds the labels.
+- The **Ses** (audio) section has a 0-100 % slider, `Ses −` / `Ses +` (step 10 %), `Uygula`, and the
+  toggles for the video audio, the latched `so` stream and hands-free mode. The volume buttons show
+  the system volume panel and a toast, so a press is always visible.
 - The menu can pick a photo/video from the gallery (it is copied to `~/.termux/mio/media/` first),
   set the background by file name, change the font size with a slider, apply color themes, toggle
   the animations and fullscreen, create/rename/switch sessions, and show the command list.
+- ZeroTermux style extra entries: **Konteyner** (proot-distro list/install/login), **QEMU**
+  (install/setup folder), **Zamanlanmış görev** (cronie + crontab), **X11 başlat**, **Yedeği geri
+  yükle** (lists `~/termux-yedek-*.tar.gz` and restores the chosen one) and **Beautify sıfırla**
+  (clears media, animations and colors).
 - Fonts are stored with the Termux shared preferences, colors in `~/.termux/colors.properties` and
   the fullscreen flag in `~/.termux/termux.properties`, so Termux:Styling and the settings activity
   keep working as usual.
