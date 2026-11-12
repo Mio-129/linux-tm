@@ -4,7 +4,6 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.text.InputType;
-import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
@@ -38,7 +37,22 @@ import java.util.List;
 public final class MioMenu {
 
     public static final String LOG_TAG = "MioMenu";
-;
+
+    /** The color keys that can be set from the menu, with their Turkish labels. */
+    private static final String[][] COLOR_ENTRIES = new String[][]{
+        {"foreground", "Yazı rengi"},
+        {"background", "Arka plan rengi"},
+        {"cursor", "İmleç rengi"},
+        {"red", "Kırmızı"},
+        {"green", "Yeşil"},
+        {"yellow", "Sarı"},
+        {"blue", "Mavi"},
+        {"magenta", "Mor"},
+        {"cyan", "Turkuaz"},
+        {"white", "Beyaz"},
+        {"bright_black", "Parlak siyah"},
+        {"bright_white", "Parlak beyaz"}
+    };
 
     /** A few ready made color schemes (name, foreground, background, cursor) for the color menu. */
     private static final String[][] THEMES = new String[][]{
@@ -70,59 +84,7 @@ public final class MioMenu {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to open the Mio panel", e);
             showToast(activity, "Panel açılamadı: " + e);
         }
-    }
-
-    /** Read the fullscreen state without letting a failure prevent the menu from being shown. */
-    private static boolean readFullScreen(@NonNull TermuxActivity activity) {
-        try {
-            return MioTextStyle.isFullScreen(activity);
-        } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the fullscreen state", e);
-            return false;
-        }
-    }
-
-    /** Read the volume keys state without letting a failure prevent the menu from being shown. */
-    private static boolean readVolumeKeysEnabled(@NonNull TermuxActivity activity) {
-        try {
-            return MioTextStyle.isVolumeKeysEnabled(activity);
-        } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the volume keys state", e);
-            return false;
-        }
-    }
-
-
-    /** Turn the audio of the background video on or off, the same as the `so` and `so off` commands. */
-    private static void toggleVideoAudio(@NonNull TermuxActivity activity) {
-        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
-        if (backgroundView == null || !backgroundView.isVideo()) {
-            showToast(activity, "Önce bir video ayarla: swset video.mp4");
-            return;
-        }
-
-        boolean enabled = backgroundView.isAudioEnabled();
-        if (enabled) {
-            backgroundView.setAudioEnabled(false);
-            showToast(activity, "Video sesi kapatıldı.");
-        } else if (backgroundView.setAudioEnabled(true)) {
-            showToast(activity, "Video sesi açıldı.");
-        } else {
-            showToast(activity, "Video sesi açılamadı.");
-        }
-    }
-
-    /** Switch the volume keys between the media volume and the terminal shortcuts (Ctrl/Esc). */
-    private static void toggleVolumeKeys(@NonNull TermuxActivity activity) {
-        boolean enabled = !MioTextStyle.isVolumeKeysEnabled(activity);
-        MioTextStyle.setVolumeKeysEnabled(activity, enabled);
-        showToast(activity, enabled
-            ? "Ses tuşları medya sesini değiştirir."
-            : "Ses tuşları terminal kısayolu (Ctrl/Esc) olarak çalışır.");
-    }
-
-
-    /* ---------------------------------------------------------------------------------------- */
+    }    /** Read the volume keys state without letting a failure prevent the menu from being shown. */    /** Turn the audio of the background video on or off, the same as the `so` and `so off` commands. */    /** Switch the volume keys between the media volume and the terminal shortcuts (Ctrl/Esc). */    /* ---------------------------------------------------------------------------------------- */
     /* Background media                                                                          */
     /* ---------------------------------------------------------------------------------------- */
 
@@ -235,16 +197,10 @@ public final class MioMenu {
     }
 
     /* ---------------------------------------------------------------------------------------- */
-    /* Font size                                                                                 */
-    /* ---------------------------------------------------------------------------------------- */
-
-
-    /* ---------------------------------------------------------------------------------------- */
     /* Colors                                                                                    */
     /* ---------------------------------------------------------------------------------------- */
 
-    /** Show the color and theme menu. */
-    /** Open the color menu, used by the panel activity. */
+    /** Open the color and theme menu, used by the panel activity. */
     public static void showColorMenuFor(@NonNull android.app.Activity activity) {
         showColorMenuInternal(activity);
     }
@@ -252,13 +208,7 @@ public final class MioMenu {
     /** Open the command list, used by the panel activity. */
     public static void showCommandsFor(@NonNull android.app.Activity activity) {
         showCommandsInternal(activity);
-    }
-
-    private static void showColorMenu(@NonNull TermuxActivity activity) {
-        showColorMenuInternal(activity);
-    }
-
-    private static void showCommandsDialog(@NonNull TermuxActivity activity) {
+    }    private static void showCommandsDialog(@NonNull TermuxActivity activity) {
         showCommandsInternal(activity);
     }
 
@@ -346,60 +296,7 @@ public final class MioMenu {
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
-    }
-
-    /* ---------------------------------------------------------------------------------------- */
-    /* Fullscreen                                                                                */
-    /* ---------------------------------------------------------------------------------------- */
-
-    private static void toggleFullScreen(@NonNull TermuxActivity activity) {
-        boolean enabled = !MioTextStyle.isFullScreen(activity);
-        MioTextStyle.setFullScreen(activity, enabled);
-        showToast(activity, enabled ? "Tam ekran açıldı." : "Tam ekran kapatıldı.");
-    }
-
-    /* ---------------------------------------------------------------------------------------- */
-    /* Sessions                                                                                  */
-    /* ---------------------------------------------------------------------------------------- */
-
-    /** Show the menu with the actions of the sessions of the terminal. */
-    private static void showSessionMenu(@NonNull TermuxActivity activity) {
-        String[] items = new String[]{
-            "Yeni oturum",
-            "Mevcut oturumu yeniden adlandır",
-            "Sonraki oturuma geç",
-            "Önceki oturuma geç",
-            "Oturum listesi"
-        };
-
-        new AlertDialog.Builder(activity)
-            .setTitle(R.string.mio_menu_sessions_title)
-            .setItems(items, (dialog, which) -> {
-                dialog.dismiss();
-                switch (which) {
-                    case 0:
-                        activity.getTermuxTerminalSessionClient().addNewSession(false, null);
-                        break;
-                    case 1:
-                        activity.getTermuxTerminalSessionClient().renameSession(activity.getCurrentSession());
-                        break;
-                    case 2:
-                        activity.getTermuxTerminalSessionClient().switchToSession(true);
-                        break;
-                    case 3:
-                        activity.getTermuxTerminalSessionClient().switchToSession(false);
-                        break;
-                    case 4:
-                        activity.getDrawer().openDrawer(android.view.Gravity.START);
-                        break;
-                    default:
-                }
-            })
-            .setNegativeButton(android.R.string.cancel, null)
-            .show();
-    }
-
-    /* ---------------------------------------------------------------------------------------- */
+    }    /* ---------------------------------------------------------------------------------------- */    /* ---------------------------------------------------------------------------------------- */
     /* Commands and help                                                                         */
     /* ---------------------------------------------------------------------------------------- */
 
