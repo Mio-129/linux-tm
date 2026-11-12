@@ -1,15 +1,18 @@
 package com.termux.app.mio;
 
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -83,107 +86,270 @@ public final class MioMenu {
     /* ---------------------------------------------------------------------------------------- */
 
     /**
-     * Show the main menu of the fork.
+     * The Mio panel of the fork, laid out like the side menu of ZeroTermux: a scrollable column of
+     * sections (background media, animations, audio, font, colors, window, sessions and commands)
+     * with the most used actions at the top, so that nothing has to be typed and every action is
+     * reachable with a scroll.
      *
-     * The menu is built on the fly so that the current state of every toggle can be shown and so
-     * that a failure while reading a state cannot prevent the menu from being shown at all.
+     * Every action is built here and shown in a dialog with a title and a close button, so that a
+     * failure while reading one of the states can never prevent the panel from opening.
      */
     public static void show(@NonNull TermuxActivity activity) {
+        Context context = activity;
+        float density = context.getResources().getDisplayMetrics().density;
+
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding((int) (16 * density), (int) (12 * density), (int) (16 * density), (int) (12 * density));
+
+        // ---------------------------------------------------------------- background state --
         MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
-        boolean snow = false;
-        boolean particles = false;
         boolean hasMedia = false;
         boolean isVideo = false;
         boolean audioEnabled = false;
+        MioParticleView.Mode animationMode = MioParticleView.Mode.NONE;
 
         if (backgroundView != null) {
             try {
-                MioParticleView.Mode mode = backgroundView.getAnimationMode();
-                snow = mode == MioParticleView.Mode.SNOW;
-                particles = mode == MioParticleView.Mode.PARTICLES;
                 hasMedia = backgroundView.hasMedia();
                 isVideo = backgroundView.isVideo();
                 audioEnabled = backgroundView.isAudioEnabled();
+                animationMode = backgroundView.getAnimationMode();
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the background state", e);
             }
         }
 
-        String volumeLabel = "Ses tuşları: " + (readVolumeKeysEnabled(activity) ? "medya sesi" : "terminal kısayolu (Ctrl/Esc)");
-        String audioLabel = !isVideo ? "Video sesi: (video yok)"
-            : audioEnabled ? "Video sesi: AÇIK (kapat)"
-            : "Video sesi: kapalı (aç)";
+        File mediaFile = backgroundView == null ? null : backgroundView.getMediaFile();
+        String mediaSummary = !hasMedia ? "Arka plan: siyah (medya yok)"
+            : "Arka plan: " + (isVideo ? "video" : "fotoğraf") + " — " + (mediaFile == null ? "?" : mediaFile.getName());
 
-        String[] items = new String[]{
-            "Arka plan: " + (hasMedia ? "medya ayarlı" : "siyah"),
-            "Kar animasyonu: " + (snow ? "AÇIK (kapat)" : "kapalı (aç)"),
-            "Parçacık animasyonu: " + (particles ? "AÇIK (kapat)" : "kapalı (aç)"),
-            "Arka plan medyası ayarla (galeri / dosya / temizle)",
-            audioLabel,
-            "Yazı boyutu",
-            "Renkler ve tema",
-            "Tam ekran: " + (readFullScreen(activity) ? "AÇIK (kapat)" : "kapalı (aç)"),
-            volumeLabel,
-            "Oturumlar (yeni / yeniden adlandır)",
-            "Komutlar ve yardım",
-            "Sürüm ve teşhis",
-            "Ayarlar"
-        };
+        TextView summaryView = new TextView(context);
+        summaryView.setText(mediaSummary + "\nAnimasyon: " + animationName(animationMode) +
+            "   •   Ses: " + (isVideo ? (audioEnabled ? "açık" : "kapalı") : "-") +
+            "   •   Yazı: " + MioTextStyle.getFontSize(context));
+        summaryView.setTextSize(12);
+        summaryView.setPadding(0, 0, 0, (int) (8 * density));
+        root.addView(summaryView);
 
-        new AlertDialog.Builder(activity)
+        // -------------------------------------------------------------------------- audio ---
+        addSection(context, root, "Ses");
+
+        final MioMediaBackgroundView mediaView = backgroundView;
+        final boolean videoAvailable = isVideo;
+
+        LinearLayout audioRow = new LinearLayout(context);
+        audioRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button muteButton = addActionButton(context, audioRow, "Sesi aç", v -> {
+            if (mediaView == null || !videoAvailable) {
+                showToast(activity, "Önce bir video ayarla (Galeriden seç veya swset video.mp4).");
+                return;
+            }
+            if (mediaView.setAudioEnabled(!mediaView.isAudioEnabled())) {
+                showToast(activity, mediaView.isAudioEnabled() ? "Ses açıldı." : "Ses kapatıldı.");
+                refreshPanel(activity);
+            } else {
+                showToast(activity, "Ses değiştirilemedi.");
+            }
+        });
+        muteButton.setText(audioEnabled ? "Sesi kapat" : "Sesi aç");
+
+        addActionButton(context, audioRow, "Sesi açık tut", v -> {
+            MioAudioStream.getInstance(context).setLatched(true);
+            refreshPanel(activity);
+        });
+
+        addActionButton(context, audioRow, "Sesi bırak", v -> {
+            MioAudioStream.getInstance(context).setLatched(false);
+            refreshPanel(activity);
+        });
+
+        root.addView(audioRow);
+
+        LinearLayout volumeRow = new LinearLayout(context);
+        volumeRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, volumeRow, "Ses -  🔉", v -> {
+            MioAudioStream.getInstance(context).changeVolume(false);
+            refreshPanel(activity);
+        });
+        addActionButton(context, volumeRow, "Ses +  🔊", v -> {
+            MioAudioStream.getInstance(context).changeVolume(true);
+            refreshPanel(activity);
+        });
+        root.addView(volumeRow);
+
+        int volumePercent = MioAudioStream.getInstance(context).getVolumePercent();
+        TextView volumeView = new TextView(context);
+        volumeView.setText("Medya ses seviyesi: " + (volumePercent < 0 ? "?" : volumePercent + "%"));
+        volumeView.setTextSize(12);
+        root.addView(volumeView);
+
+        // ---------------------------------------------------------------------- background --
+        addSection(context, root, "Arka plan medyası");
+
+        LinearLayout backgroundRow = new LinearLayout(context);
+        backgroundRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, backgroundRow, "Galeriden seç", v -> pickMediaFile(activity));
+        addActionButton(context, backgroundRow, "Dosya adı", v -> showSetMediaByFileNameDialog(activity));
+        root.addView(backgroundRow);
+
+        LinearLayout backgroundRow2 = new LinearLayout(context);
+        backgroundRow2.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, backgroundRow2, "İlk fotoğraf/video", v -> runCommand(activity, "swset"));
+        addActionButton(context, backgroundRow2, "Arka planı temizle", v -> {
+            MioCommandManager.getInstance(activity).clearWallpaper();
+            refreshPanel(activity);
+        });
+        root.addView(backgroundRow2);
+
+        // ---------------------------------------------------------------------- animations --
+        addSection(context, root, "Animasyonlar");
+
+        LinearLayout animationRow = new LinearLayout(context);
+        animationRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button snowButton = addActionButton(context, animationRow, "Kar", v -> {
+            toggleSnow(activity);
+            refreshPanel(activity);
+        });
+        snowButton.setText("Kar: " + (animationMode == MioParticleView.Mode.SNOW ? "AÇIK" : "kapalı"));
+
+        Button particleButton = addActionButton(context, animationRow, "Parçacık", v -> {
+            toggleParticles(activity);
+            refreshPanel(activity);
+        });
+        particleButton.setText("Parçacık: " + (animationMode == MioParticleView.Mode.PARTICLES ? "AÇIK" : "kapalı"));
+
+        addActionButton(context, animationRow, "Kapat", v -> {
+            if (backgroundView != null) {
+                backgroundView.setAnimationMode(MioParticleView.Mode.NONE);
+                MioCommandManager.getInstance(context).onAnimationModeChanged(MioParticleView.Mode.NONE);
+            }
+            refreshPanel(activity);
+        });
+        root.addView(animationRow);
+
+        // --------------------------------------------------------------------------- font ---
+        addSection(context, root, "Yazı ve renkler");
+
+        LinearLayout fontRow = new LinearLayout(context);
+        fontRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, fontRow, "Yazı -", v -> {
+            MioTextStyle.changeFontSize(context, -2);
+            refreshPanel(activity);
+        });
+        addActionButton(context, fontRow, "Yazı +", v -> {
+            MioTextStyle.changeFontSize(context, 2);
+            refreshPanel(activity);
+        });
+        addActionButton(context, fontRow, "Boyut seç", v -> showFontSizeDialog(activity));
+        root.addView(fontRow);
+
+        LinearLayout colorRow = new LinearLayout(context);
+        colorRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, colorRow, "Renkler / tema", v -> showColorMenu(activity));
+        addActionButton(context, colorRow, "Renkleri sıfırla", v -> {
+            MioTextStyle.resetColors(context);
+            showToast(activity, "Renkler varsayılana döndü.");
+        });
+        root.addView(colorRow);
+
+        // ------------------------------------------------------------------------- window ----
+        addSection(context, root, "Pencere ve tuşlar");
+
+        LinearLayout windowRow = new LinearLayout(context);
+        windowRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button fullScreenButton = addActionButton(context, windowRow, "Tam ekran", v -> {
+            toggleFullScreen(activity);
+            refreshPanel(activity);
+        });
+        fullScreenButton.setText("Tam ekran: " + (readFullScreen(activity) ? "AÇIK" : "kapalı"));
+
+        Button volumeKeysButton = addActionButton(context, windowRow, "Ses tuşları", v -> {
+            toggleVolumeKeys(activity);
+            refreshPanel(activity);
+        });
+        volumeKeysButton.setText("Tuşlar: " + (readVolumeKeysEnabled(activity) ? "medya sesi" : "Ctrl/Esc"));
+        root.addView(windowRow);
+
+        // ----------------------------------------------------------------------- sessions ----
+        addSection(context, root, "Oturumlar ve diğer");
+
+        LinearLayout sessionRow = new LinearLayout(context);
+        sessionRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, sessionRow, "Yeni oturum", v ->
+            activity.getTermuxTerminalSessionClient().addNewSession(false, null));
+        addActionButton(context, sessionRow, "Oturum listesi", v -> activity.getDrawer().openDrawer(Gravity.START));
+        addActionButton(context, sessionRow, "Oturum paneli", v -> showSessionMenu(activity));
+        root.addView(sessionRow);
+
+        LinearLayout otherRow = new LinearLayout(context);
+        otherRow.setOrientation(LinearLayout.HORIZONTAL);
+        addActionButton(context, otherRow, "Durum", v -> showStatusDialog(activity));
+        addActionButton(context, otherRow, "Sürüm / teşhis", v -> showAboutDialog(activity));
+        addActionButton(context, otherRow, "Komutlar", v -> showCommandsDialog(activity));
+        addActionButton(context, otherRow, "Ayarlar", v ->
+            activity.startActivity(new Intent(activity, SettingsActivity.class)));
+        root.addView(otherRow);
+
+        ScrollView scrollView = new ScrollView(context);
+        scrollView.addView(root);
+
+        sCurrentPanel = new AlertDialog.Builder(activity)
             .setTitle(R.string.mio_menu_title)
-            .setItems(items, (dialog, which) -> {
-                dialog.dismiss();
-                try {
-                    switch (which) {
-                        case 0:
-                            showStatusDialog(activity);
-                            break;
-                        case 1:
-                            toggleSnow(activity);
-                            break;
-                        case 2:
-                            toggleParticles(activity);
-                            break;
-                        case 3:
-                            showBackgroundMediaMenu(activity);
-                            break;
-                        case 4:
-                            toggleVideoAudio(activity);
-                            break;
-                        case 5:
-                            showFontSizeDialog(activity);
-                            break;
-                        case 6:
-                            showColorMenu(activity);
-                            break;
-                        case 7:
-                            toggleFullScreen(activity);
-                            break;
-                        case 8:
-                            toggleVolumeKeys(activity);
-                            break;
-                        case 9:
-                            showSessionMenu(activity);
-                            break;
-                        case 10:
-                            showCommandsDialog(activity);
-                            break;
-                        case 11:
-                            showAboutDialog(activity);
-                            break;
-                        case 12:
-                            activity.startActivity(new Intent(activity, SettingsActivity.class));
-                            break;
-                        default:
-                    }
-                } catch (Exception e) {
-                    Logger.logStackTraceWithMessage(LOG_TAG, "Mio menu action failed", e);
-                    showToast(activity, "Mio menü hatası: " + e);
-                }
-            })
-            .setNegativeButton(android.R.string.cancel, null)
+            .setView(scrollView)
+            .setPositiveButton(R.string.mio_menu_close, null)
             .show();
+    }
+
+    /** Add a section header to the panel. */
+    private static void addSection(@NonNull Context context, @NonNull LinearLayout parent, @NonNull String title) {
+        float density = context.getResources().getDisplayMetrics().density;
+        TextView header = new TextView(context);
+        header.setText(title);
+        header.setTextSize(13);
+        header.setTypeface(header.getTypeface(), android.graphics.Typeface.BOLD);
+        header.setPadding(0, (int) (14 * density), 0, (int) (4 * density));
+        parent.addView(header);
+    }
+
+    /** Add an action button to a row of the panel. */
+    @NonNull
+    private static Button addActionButton(@NonNull Context context, @NonNull LinearLayout row,
+                                          @NonNull String text, @NonNull View.OnClickListener listener) {
+        Button button = new Button(context);
+        button.setText(text);
+        button.setTextSize(11);
+        button.setAllCaps(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setOnClickListener(listener);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        int margin = (int) (3 * context.getResources().getDisplayMetrics().density);
+        params.setMargins(margin, 0, margin, 0);
+        row.addView(button, params);
+        return button;
+    }
+
+    /** Re-open the panel so that the state labels and buttons are refreshed after an action. */
+    private static void refreshPanel(@NonNull TermuxActivity activity) {
+        // The panel is a dialog of the activity, so closing and re-opening it is the simplest way to
+        // refresh the labels; it is done on the next frame so that the running action can finish
+        activity.getWindow().getDecorView().post(() -> {
+            Dialog currentDialog = sCurrentPanel;
+            if (currentDialog != null && currentDialog.isShowing()) currentDialog.dismiss();
+            show(activity);
+        });
+    }
+
+    /** The panel that is currently shown, so that {@link #refreshPanel} can rebuild it. */
+    @Nullable
+    private static Dialog sCurrentPanel;
+
+    @NonNull
+    private static String animationName(@NonNull MioParticleView.Mode mode) {
+        return mode == MioParticleView.Mode.SNOW ? "kar"
+            : mode == MioParticleView.Mode.PARTICLES ? "parçacık" : "kapalı";
     }
 
     /** Read the fullscreen state without letting a failure prevent the menu from being shown. */
@@ -741,6 +907,9 @@ public final class MioMenu {
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
 
         try {
+            // Close the panel so that the picker is visible, it is re-opened after the file is set
+            Dialog panel = sCurrentPanel;
+            if (panel != null && panel.isShowing()) panel.dismiss();
             activity.startActivityForResult(Intent.createChooser(intent, activity.getString(R.string.mio_menu_pick_file)), PICK_MEDIA_REQUEST_CODE);
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to open the file picker", e);
@@ -782,6 +951,7 @@ public final class MioMenu {
             activity.runOnUiThread(() -> {
                 if (result) {
                     runCommand(activity, "swset " + quote(targetFile.getAbsolutePath()));
+                    refreshPanel(activity);
                 } else {
                     showToast(activity, "Dosya kopyalanamadı: " + name);
                 }
