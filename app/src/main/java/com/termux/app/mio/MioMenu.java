@@ -317,6 +317,12 @@ public final class MioMenu {
                 items.add(isAudioEnabled ? "Sesi kapat (so off)" : "Sesi aç (so)");
             }
         }
+        try {
+            boolean latched = MioAudioStream.getInstance(activity).isLatched();
+            items.add(latched ? "Ses akışı: AÇIK (kapat)" : "Ses akışı: kapalı (aç)");
+        } catch (Exception e) {
+            items.add("Ses akışı");
+        }
         items.add("Durumu göster");
         items.add("Komutları göster");
 
@@ -339,6 +345,8 @@ public final class MioMenu {
                     runCommand(activity, "so off");
                 } else if (selected.startsWith("Sesi aç")) {
                     runCommand(activity, "so");
+                } else if (selected.startsWith("Ses akışı")) {
+                    runCommand(activity, "so ses" + (selected.contains("AÇIK") ? " kapat" : ""));
                 } else if (selected.startsWith("Durumu")) {
                     runCommand(activity, "swset status");
                 } else {

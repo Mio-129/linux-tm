@@ -68,6 +68,11 @@ public final class MioCommandManager {
     public static final String ACTION_STYLE = "com.termux.mio.action.STYLE";
     /** The broadcast action sent by the `mio ses` command to switch the volume keys behaviour. */
     public static final String ACTION_VOLUME_KEYS = "com.termux.mio.action.VOLUME_KEYS";
+    /** The broadcast action sent by `swset ses` and `so ses` to latch the media audio on or off. */
+    public static final String ACTION_AUDIO_STREAM = "com.termux.mio.action.AUDIO_STREAM";
+
+    public static final String MODE_VOLUME_UP = "volume-up";
+    public static final String MODE_VOLUME_DOWN = "volume-down";
 
     /** The extra for the animation mode, valid values are {@link #MODE_SNOW}, {@link #MODE_PARTICLES} and {@link #MODE_OFF}. */
     public static final String EXTRA_ANIMATION_MODE = "mode";
@@ -269,6 +274,12 @@ public final class MioCommandManager {
                 toggleVolumeKeys();
                 return true;
             }
+            case ACTION_AUDIO_STREAM: {
+                MioRequest request = MioRequest.fromRequestFile(null);
+                if (request != null) MioRequest.deleteRequestFile();
+                setAudioStream(intent.getStringExtra(EXTRA_MODE));
+                return true;
+            }
             default:
                 // The scripts may fall back to `termux-am startservice` with ACTION_SERVICE_EXECUTE
                 // if broadcasts are restricted on the device, in which case the extra intent is
@@ -304,6 +315,7 @@ public final class MioCommandManager {
             case ACTION_SESSION:
             case ACTION_STYLE:
             case ACTION_VOLUME_KEYS:
+            case ACTION_AUDIO_STREAM:
                 return true;
             default:
                 return false;
@@ -410,6 +422,7 @@ public final class MioCommandManager {
             // The audio of the video is only played if the `so` command is run, unless the
             // `--ses` flag was passed to `swset`
             if (backgroundView.setVideo(file, playAudio)) {
+                if (!playAudio) MioAudioStream.getInstance(mApplication).applyLatchedState();
                 if (showToastIfFailed)
                     showToast("swset: video arka plan olarak ayarlandı: " + file.getName() +
                         (playAudio ? " (ses açık)" : " (sessiz, sesi açmak için: so)"));
@@ -715,6 +728,20 @@ public final class MioCommandManager {
             MioTextStyle.setFullScreen(mApplication, enabled);
             showToast(enabled ? "mio: tam ekran açıldı." : "mio: tam ekran kapatıldı.");
         });
+    }
+
+    /** Latch the audio of the background video on or off, like `so ses` and `so ses kapat`. */
+    private void setAudioStream(@Nullable String mode) {
+        MioAudioStream stream = MioAudioStream.getInstance(mApplication);
+        if (MODE_VOLUME_UP.equals(mode)) {
+            stream.changeVolume(true);
+        } else if (MODE_VOLUME_DOWN.equals(mode)) {
+            stream.changeVolume(false);
+        } else if (MODE_OFF.equals(mode)) {
+            stream.setLatched(false);
+        } else {
+            stream.setLatched(true);
+        }
     }
 
     /** Switch the volume keys between the media volume and the terminal shortcuts, like `mio ses`. */

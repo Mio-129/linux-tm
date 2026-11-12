@@ -107,6 +107,10 @@ so off         # mute it again (video keeps playing silently)
 so stop        # stop the audio and clear the background
 so video.mp4   # set this video and enable its audio
 so status      # show the current state
+so ses         # hands free audio: the video audio stays enabled
+so ses kapat   # turn the hands free audio off
+so ses +       # raise the media volume, `so ses -` lowers it
+swset ses      # same as `so ses` (also works right after `swset video.mp4`)
 ```
 
 If the video itself has no audio track, the audio of a file with the same name is played when `so`

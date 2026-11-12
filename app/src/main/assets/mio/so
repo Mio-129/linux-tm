@@ -6,6 +6,9 @@
 #   so              Arka plandaki videonun sesini açar
 #   so <dosya>      Videoyu arka plana koyar ve sesini açar
 #   so off          Sesi kapatır (video sessiz oynamaya devam eder)
+#   so ses          Ses akışını açar (eller serbest, tekrar tekrar `so` yazmadan)
+#   so ses kapat    Ses akışını kapatır
+#   so ses +|-      Ses seviyesini arttırır/azaltır (eller serbest, oturum boyunca çalışır)
 #   so stop         Sesi durdurur ve arka planı temizler
 #   so status       Şu anki durumu gösterir
 #   so --help       Bu yardımı gösterir
@@ -22,6 +25,7 @@ fi
 
 ACTION_SET_AUDIO="com.termux.mio.action.SET_AUDIO"
 ACTION_STATUS="com.termux.mio.action.STATUS"
+ACTION_AUDIO_STREAM="com.termux.mio.action.AUDIO_STREAM"
 
 REQUEST_DIR="$HOME/.termux/mio"
 REQUEST_FILE="$REQUEST_DIR/request"
@@ -33,6 +37,9 @@ Kullanım: so [seçenek] [dosya]
   so             Arka plandaki videonun sesini açar.
   so <dosya>     Videoyu arka plana koyar ve sesini açar.
   so off         Sesi kapatır.
+  so ses         Ses akışını açar (eller serbest; ses açık kalır).
+  so ses kapat   Ses akışını kapatır.
+  so ses +|-     Ses seviyesini arttırır/azaltır.
   so stop        Sesi ve arka planı durdurur.
   so status      Şu anki durumu gösterir.
   so --help      Bu yardımı gösterir.
@@ -84,6 +91,29 @@ fi
 case "$1" in
     -h|--help|help)
         usage
+        exit 0
+        ;;
+    ses|audio|stream|unmute|acik-tut)
+        case "$2" in
+            kapat|off|sessiz|mute)
+                write_request "command=so" "name=" "media_type=video" "audio=0" "dir=$(pwd)"
+                send_command -a "$ACTION_AUDIO_STREAM" --es mode off || exit 1
+                printf 'so: ses akışı kapatıldı\n'
+                ;;
+            +|arttir|arttır|up)
+                send_command -a "$ACTION_AUDIO_STREAM" --es mode volume-up || exit 1
+                printf 'so: ses seviyesi arttırıldı\n'
+                ;;
+            -|azalt|down)
+                send_command -a "$ACTION_AUDIO_STREAM" --es mode volume-down || exit 1
+                printf 'so: ses seviyesi azaltıldı\n'
+                ;;
+            *)
+                write_request "command=so" "name=" "media_type=video" "audio=1" "dir=$(pwd)"
+                send_command -a "$ACTION_AUDIO_STREAM" --es mode on || exit 1
+                printf 'so: ses akışı açıldı (ses açık kalacak)\n'
+                ;;
+        esac
         exit 0
         ;;
     off|kapat|sessiz|mute)

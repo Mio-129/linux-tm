@@ -160,6 +160,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         intentFilter.addAction(MioCommandManager.ACTION_SESSION);
         intentFilter.addAction(MioCommandManager.ACTION_STYLE);
         intentFilter.addAction(MioCommandManager.ACTION_VOLUME_KEYS);
+        intentFilter.addAction(MioCommandManager.ACTION_AUDIO_STREAM);
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

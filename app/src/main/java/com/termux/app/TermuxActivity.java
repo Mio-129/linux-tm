@@ -282,6 +282,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setMioMenuButtonView();
 
+        setMioMenuLongPressViews();
+
         setNewSessionButtonView();
 
         setToggleKeyboardView();
@@ -642,6 +644,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         ImageButton settingsButton = findViewById(R.id.settings_button);
         settingsButton.setOnClickListener(v -> {
             ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
+        });
+    }
+
+    /**
+     * Also open the Mio menu with a long press on the session drawer header (the settings button row)
+     * and on the settings button itself, so that the menu is always one gesture away when the
+     * terminal long press or the drawer button cannot be used.
+     */
+    private void setMioMenuLongPressViews() {
+        View settingsButton = findViewById(R.id.settings_button);
+        if (settingsButton != null) settingsButton.setOnLongClickListener(v -> {
+            getDrawer().closeDrawers();
+            MioMenu.show(this);
+            return true;
         });
     }
 
