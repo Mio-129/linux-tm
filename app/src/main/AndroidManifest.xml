@@ -106,6 +106,18 @@
             android:resizeableActivity="true"
             tools:targetApi="n" />
 
+        <!-- The code editor of the "Paketler" section, so that the package scripts can be
+             edited on the phone instead of with nano -->
+        <activity
+            android:name=".app.mio.MioEditorActivity"
+            android:exported="false"
+            android:label="@string/mio_menu_editor_title"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboard|keyboardHidden|navigation"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.MioMenu"
+            android:resizeableActivity="true"
+            tools:targetApi="n" />
+
         <activity
             android:name=".app.activities.SettingsActivity"
             android:exported="true"

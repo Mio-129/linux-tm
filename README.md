@@ -190,7 +190,32 @@ mio paket log Older-Pack   # show the log of the last run
 - The `*.start-up.sh` scripts of the enabled packages are run once per app start, in the background,
   only after the package was installed without a pending update.
 - The menu has the same actions: **Paket güncelle (N)**, **Örnek oluştur**, a package selector, and
-  **Kur / Güncelle / Başlangıç / Günlük / Aç-Kapat / Klasör** for the selected package.
+  **Kur / Güncelle / Başlangıç / Günlük / Düzenle / Aç-Kapat / Klasör** for the selected package.
+- **Kod editörü** (`MioEditorActivity`) edits the scripts on the phone instead of `nano`: a monospace
+  editor with the code key row (`Tab`, `{ }`, `( )`, `[ ]`, `< >`, `=`, `"`, `'`, `/`, `:`, `;`, `|`,
+  `$`, `#`, `_`, `&&`), **Kaydet**, **Çalıştır** (saves and runs the script with `sh` and shows the
+  output) and **Kapat** (asks before discarding changes). Reachable from **Paketler > Düzenle** and
+  from **Terminal araçları > Kod editörü**; it can also create a new file.
+
+### ZeroTermux menu parity
+
+The left menu of ZeroTermux was read from
+[toolbar_menu_xml](https://github.com/hanxinhao000/ZeroTermux/blob/main/app/src/main/assets/mainmenu/en/zt_menu_config.xml)
+and the entries are mirrored in the panel (Turkish labels):
+
+| ZeroTermux group | In the Mio panel |
+| --- | --- |
+| Common functions | `Terminal araçları` (Kaynak değiştir, Yedekle, konteyner, QEMU), `Konteyner, QEMU, görevler` |
+| X11 | `X11 kur`, `X11 başlat` |
+| Beautification/UI | `Yazı ve renkler`, `Animasyonlar`, `Pencere ve tuşlar`, `Beautify sıfırla` |
+| Create project | `Proje oluştur` (C, Java, Python, PHP, Node, Proje aç) |
+| Configure terminal | `Terminal ayarları` (Başlangıç dosyası, Karşılama mesajı, Komut tanımı, Alt klavye, Açılışta çalıştır, SHELL çalıştır) |
+| Online functions | `Çevrimiçi` (Wiki, forum, kaynak adresi) |
+| ZT functions | `ZT işlevleri` (FTP servisi, ADB kablosuz, SMS/Arama, Dizin aç, Kısayollar, Dil/tema) |
+| Packages/modules | `Paketler` (`.a.sh` / `.b.sh` / `.start-up.sh`, see above) |
+
+ZeroTermux installs ZIP modules whose `INSTALL.txt` lines are `source -> target -> mode`, while this
+fork runs the scripts of a package instead, which can also fail, log and run a start-up script.
 
 ### How it works
 

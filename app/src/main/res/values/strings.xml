@@ -70,6 +70,7 @@
     <string name="action_mio_snow">Kar animasyonu</string>
     <string name="action_mio_particles">Parçacık animasyonu</string>
     <string name="mio_menu_title">Mio menü</string>
+    <string name="mio_menu_editor_title">Kod editörü</string>
     <string name="mio_menu_background_file_title">Arka plan medyası</string>
     <string name="mio_menu_background_file_message">Bulunduğun klasördeki veya ana dizindeki dosya adı, örnek: foto.png veya video.mp4</string>
     <string name="mio_menu_apply">Uygula</string>
