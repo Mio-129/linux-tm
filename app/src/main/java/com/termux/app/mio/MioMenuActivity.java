@@ -1542,8 +1542,8 @@ public final class MioMenuActivity extends Activity {
                     for (int i = 0; i < menuFiles.size(); i++) names[i] = menuFiles.get(i).getName();
                     new AlertDialog.Builder(this)
                         .setTitle("Menü dosyası")
-                        .setItems(names, (d, which) -> MioEditorActivity.startFromContext(this,
-                            menuFiles.get(which).getAbsolutePath()))
+                        .setItems(names, (d, index) -> MioEditorActivity.startFromContext(this,
+                            menuFiles.get(index).getAbsolutePath()))
                         .setNeutralButton("Yeni dosya", (d, w) -> MioEditorActivity.startFromContext(
                             this, new File(menuDir, "ozel.menu").getAbsolutePath()))
                         .setNegativeButton(android.R.string.cancel, null)
