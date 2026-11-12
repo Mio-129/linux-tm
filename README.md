@@ -138,8 +138,12 @@ mio yardim             # help
 - The animations are drawn by `MioParticleView` **between the background media and the terminal
   text**, the black background stays and the text stays readable. The chosen animation is stored in
   the app preferences and restored on the next start.
-- The menu is also reachable from the terminal long press menu (**Mio menu**, **Snow animation**,
-  **Particle animation**) and from the **Mio menu** button at the top of the session drawer.
+- The menu is also reachable with a **short press on the physical volume up key** (a long press
+  still acts as the Fn key, and the volume still changes if the volume keys are set to "volume"),
+  from the terminal long press menu (**Mio menu**, **Snow animation**, **Particle animation**) and
+  from the **Mio menu** button at the top of the session drawer. The key can be turned off with the
+  **Ses açma tuşu menü** toggle in the panel or with `mio-menu-on-volume-up=false` in
+  `~/.termux/termux.properties`.
 - The panel is a **separate activity** (`MioMenuActivity`), not a dialog: it is a scrollable column
   of sections like the side menu of ZeroTermux, it stays open while a button is pressed and it keeps
   its scroll position, so a short screen cannot hide the list. Every button rebuilds the labels.
@@ -156,6 +160,103 @@ mio yardim             # help
 - Fonts are stored with the Termux shared preferences, colors in `~/.termux/colors.properties` and
   the fullscreen flag in `~/.termux/termux.properties`, so Termux:Styling and the settings activity
   keep working as usual.
+
+### Paketler - packages with `.a.sh`, `.b.sh` and `.start-up.sh`
+
+The **Paketler** (packages) section of the Mio menu installs small script packages, in the spirit of
+the package tiers of ZeroTermux. A package is a folder below `~/.mio/pkgs/<paket>`:
+
+| File | Meaning |
+| --- | --- |
+| `URL` | the remote install script, run as `bash <(curl -s <url>)` (takes precedence over the scripts below) |
+| `<paket>.a.sh` | the first script, **Older-Pack** - the installation itself |
+| `<paket>.b.sh` | the second script, **Older-Tool** - only run after `.a.sh` succeeded |
+| `<paket>.c.sh`, ... | further steps, run in letter order |
+| `<paket>.start-up.sh` | **start-up** - run on every app start and after an update |
+| `VERSION` | the version of the package, a changed version means an update |
+
+```sh
+mio paket                  # list the packages and their state
+mio paket kur Older-Pack   # run the URL script if there is one, otherwise .a.sh then .b.sh
+mio paket guncelle         # install every package with a new VERSION
+mio paket baslat           # run the .start-up.sh scripts of the installed packages
+mio paket sifirla          # create the example Older-Pack package
+mio paket log Older-Pack   # show the log of the last run
+```
+
+- **Remote install:** if the package has a `URL` file, `Kur` / `Güncelle` (and `mio paket kur`) run
+  that script in the terminal with `bash <(curl -s <url>)`, so the `pkg install` progress is visible
+  and interactive input works. Older-Pack points to
+  `https://raw.githubusercontent.com/Mio-129/tm-pkg/refs/heads/main/older-pack`. The script is
+  downloaded to `~/.mio/tmp-remote-$$.sh` first, so a failed download or a non zero exit code leaves
+  the package **not** marked as installed. Without a `URL` file the local `.a.sh`/`.b.sh` scripts run.
+- A failing `.a.sh` stops the run: `.b.sh` is **not** executed and the package is not marked as
+  installed, so a broken first stage never looks like a successful install.
+- The state lives in `~/.mio/state/` (`<paket>.installed`, `<paket>.disabled`) and the output of the
+  last run in `~/.mio/log/<paket>.log`, so both the panel and the shell commands see the same state.
+- The `*.start-up.sh` scripts of the enabled packages are run once per app start, in the background,
+  only after the package was installed without a pending update.
+- The menu has the same actions: **Paket güncelle (N)**, **Örnek oluştur**, a package selector, and
+  **Kur / Güncelle / Başlangıç / Günlük / Düzenle / Aç-Kapat / Klasör** for the selected package.
+- **Kod editörü** (`MioEditorActivity`) edits the scripts on the phone instead of `nano`: a monospace
+  editor with the code key row (`Tab`, `{ }`, `( )`, `[ ]`, `< >`, `=`, `"`, `'`, `/`, `:`, `;`, `|`,
+  `$`, `#`, `_`, `&&`), **Kaydet**, **Çalıştır** and **Kapat** (asks before discarding changes).
+  Reachable from **Paketler > Düzenle** and from **Terminal araçları > Kod editörü**; it can also
+  create a new file.
+- **Satır numaraları:** the editor has a gutter with the line numbers, which scrolls together with the
+  text and follows the line height of the editor (`1·2·3` key in the code key row hides/shows it and the
+  choice is remembered in the `mio_editor` preferences). Soft wrapping is off, so one line of the file is
+  exactly one line of the gutter.
+- The **Çalıştır** button picks the command from the file type, and its label says which one:
+  `.sh` is run with `sh`, a shell configuration file (`.bashrc`, `.profile`, ...) or **any file with
+  an `alias` line is sourced** (`. dosya`), `.py` runs with `python`/`python3`, `.js` with `node`,
+  `.php` with `php`, `.c`/`.cpp` is compiled with `cc` and then run, and `.java` is compiled with
+  `javac` and then run. Sourcing only affects the shell that is started for the run, so the output
+  says how to apply it to the terminal (`source ~/.bashrc`).
+- **Terminal ayarları > Alias'ları uygula** collects the `alias` lines of `~/.bashrc` in
+  `~/.mio/aliases` and adds one line to `~/.bashrc` that sources it, so the aliases are available in
+  every new session.
+
+### ZeroTermux menu parity
+
+The left menu of ZeroTermux was read from
+[toolbar_menu_xml](https://github.com/hanxinhao000/ZeroTermux/blob/main/app/src/main/assets/mainmenu/en/zt_menu_config.xml)
+and the entries are mirrored in the panel (Turkish labels):
+
+| ZeroTermux group | In the Mio panel |
+| --- | --- |
+| Common functions | `Terminal araçları` (Kaynak değiştir, Yedekle, konteyner, QEMU), `Konteyner, QEMU, görevler` |
+| X11 | `X11 kur`, `X11 başlat` |
+| Beautification/UI | `Yazı ve renkler`, `Animasyonlar`, `Pencere ve tuşlar`, `Beautify sıfırla` |
+| Create project | `Proje oluştur` (C, Java, Python, PHP, Node, Proje aç) |
+| Configure terminal | `Terminal ayarları` (Başlangıç dosyası, Karşılama mesajı, Komut tanımı, Alt klavye, Açılışta çalıştır, SHELL çalıştır) |
+| Online functions | `Çevrimiçi` (Wiki, forum, kaynak adresi) |
+| ZT functions | `ZT işlevleri` (FTP servisi, ADB kablosuz, SMS/Arama, Dizin aç, Kısayollar, Dil/tema) |
+| Packages/modules | `Paketler` (`.a.sh` / `.b.sh` / `.start-up.sh`, see above), `Modül kur (ZIP)`, `VNC` |
+| VNC | `Paketler > VNC` (TigerVNC kur/başlat/durdur, bağlantı adresi) |
+| MOE All-in-One | `ZT işlevleri > MOE All-in-One` (aynı `runMoeSh` komutu) |
+| Floating window | `ZT işlevleri > Yüzen pencere` (ZeroTermux eklentisi `com.zero_float.action.ENTER`) |
+| Language switch | `ZT işlevleri > Dil` (`~/.mio/lang`, `LANG`/`LC_ALL`) |
+
+ZeroTermux installs ZIP modules whose `INSTALL.txt` lines are `source -> target -> mode`, while this
+fork runs the scripts of a package instead, which can also fail, log and run a start-up script.
+
+### Terminal menüsü (`mio menu`)
+
+`mio menu` shows a numbered menu in the terminal that runs the selected command. The entries are read
+from `~/.mio/menu.d/*.menu`, one `label|command` per line (`#` lines are comments), so the menu can be
+extended without a new app version. `mio menu liste` lists the files and `mio menu sifirla`
+regenerates the default menu; the files can be edited from **Terminal ayarları > Terminal menüsü**
+with the code editor. `mio gui` (or `mio panel`) still opens the panel window.
+
+### Modüller (ZeroTermux `INSTALL.txt` formatı)
+
+A ZIP module, the format of ZeroTermux, can be installed from **Paketler > Modül kur (ZIP)**: the ZIP
+is extracted to `~/.mio/tempmodule`, every non comment line of `INSTALL.txt` is
+`kaynak -> hedef -> izin` and the files are copied with that permission, then the temporary folder is
+removed. A module that writes outside of the temporary folder or that has a missing source fails the
+installation instead of being half installed. The ZIPs are picked from `~/.mio/modules` or from the
+file picker.
 
 ### How it works
 
@@ -428,3 +529,22 @@ Commit messages **must** use the [Conventional Commits](https://www.conventional
 
 [<img alt="Cloudflare" width="25%" src="site/assets/sponsors/cloudflare.png" />](https://www.cloudflare.com)  
 *[Cloudflare](https://www.cloudflare.com) ([1](https://packages-cf.termux.dev))*
+
+## Kurulum sitesi ve forum (`docs/index.html`)
+
+`docs/index.html` tek dosyalık, bağımlılıksız bir site: kurulum adımları, özellik listesi ve forum.
+GitHub Pages için hazır (Settings → Pages → branch `master`/bu dal, klasör `/docs`), ya da herhangi bir
+statik sunucuda açılabilir.
+
+- **Diller:** Türkçe / İngilizce (sağ üstteki `TR`/`EN`, seçim `localStorage`'da saklanır).
+- **APK:** "En son sürüm"e bağlanır (`releases/latest`), sürüm numarası ve APK boyutu GitHub API'den
+  okunur; API'ye erişilemezse bağlantı yine çalışır.
+- **Forum:** `FORUM_API_BASE` boşsa *yerel demo* (konular yalnızca o tarayıcıda); bir API adresi
+  yazılırsa *canlı* (herkes görür). Uçlar ve doğrulama kuralları: `docs/FORUM_API.md`,
+  çalışan bir Cloudflare Workers örneği: `docs/forum-worker.js`. Arayüz HTML kaçışlar, yani
+  gönderilerdeki HTML çalışmaz.
+
+```sh
+# yerel önizleme
+python3 -m http.server 8000 --directory docs
+```

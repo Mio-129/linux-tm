@@ -84,7 +84,9 @@ public final class MioMenu {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to open the Mio panel", e);
             showToast(activity, "Panel açılamadı: " + e);
         }
-    }    /** Read the volume keys state without letting a failure prevent the menu from being shown. */    /** Turn the audio of the background video on or off, the same as the `so` and `so off` commands. */    /** Switch the volume keys between the media volume and the terminal shortcuts (Ctrl/Esc). */    /* ---------------------------------------------------------------------------------------- */
+    }
+
+    /* ---------------------------------------------------------------------------------------- */
     /* Background media                                                                          */
     /* ---------------------------------------------------------------------------------------- */
 

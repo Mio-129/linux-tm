@@ -7,6 +7,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.media.AudioManager;
 import android.os.Environment;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.InputDevice;
@@ -19,6 +20,8 @@ import android.widget.Toast;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.app.mio.MioMenu;
+import com.termux.app.mio.MioTextStyle;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.interact.ShareUtils;
@@ -61,6 +64,16 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     /** Keeping track of the special keys acting as Ctrl and Fn for the soft keyboard and other hardware keys. */
     boolean mVirtualControlKeyDown, mVirtualFnKeyDown;
+
+    /**
+     * The volume up key opens the Mio menu of this fork on a short press and still acts as the Fn
+     * key on a long press, which is the behaviour of the side menu of ZeroTermux where the menu is
+     * one gesture away. Set with the `volume-up-opens-mio-menu` property, see {@link MioTextStyle}.
+     */
+    private static final long VOLUME_UP_LONG_PRESS_MS = 500;
+
+    /** When the volume up key was pressed down, {@code 0} if it is not pressed. */
+    private long mVolumeUpDownTime;
 
     private Runnable mShowSoftKeyboardRunnable;
 
@@ -303,10 +316,19 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     /** Handle dedicated volume buttons as virtual keys if applicable. */
     private boolean handleVirtualKeys(int keyCode, KeyEvent event, boolean down) {
         InputDevice inputDevice = event.getDevice();
-        if (mActivity.getProperties().areVirtualVolumeKeysDisabled()) {
-            return false;
-        } else if (inputDevice != null && inputDevice.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
+        if (inputDevice != null && inputDevice.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
             // Do not steal dedicated buttons from a full external keyboard.
+            return false;
+        }
+
+        // A short press on the volume up key opens the Mio menu, even if the volume keys were set
+        // to change the media volume, in which case the volume is changed as well
+        boolean virtualKeysDisabled = mActivity.getProperties().areVirtualVolumeKeysDisabled();
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && MioTextStyle.isMioMenuOnVolumeUp(mActivity)) {
+            return handleVolumeUpKey(event, down, !virtualKeysDisabled);
+        }
+
+        if (virtualKeysDisabled) {
             return false;
         } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             mVirtualControlKeyDown = down;
@@ -316,6 +338,62 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Handle the volume up key of the device.
+     *
+     * The key is used as the Fn key of the terminal on a long press, which is the standard Termux
+     * behaviour, and opens the Mio menu on a short press. The Fn state is only enabled when the key
+     * is held long enough, so that a short press does not leave the terminal in a mode where the
+     * next characters are turned into escape sequences.
+     *
+     * @param allowFn If the key may also act as the Fn key, which is not the case when the volume
+     *                keys are used to change the media volume.
+     */
+    private boolean handleVolumeUpKey(KeyEvent event, boolean down, boolean allowFn) {
+        if (!down) {
+            long duration = mVolumeUpDownTime == 0 ? 0 : SystemClock.uptimeMillis() - mVolumeUpDownTime;
+            mVolumeUpDownTime = 0;
+            mVirtualFnKeyDown = false;
+
+            if (duration > 0 && duration < VOLUME_UP_LONG_PRESS_MS) {
+                MioMenu.show(mActivity);
+                // The key still changes the media volume if the volume keys were set up that way
+                if (!allowFn) raiseMediaVolume();
+            }
+            return true;
+        }
+
+        if (event.getRepeatCount() == 0) {
+            mVolumeUpDownTime = SystemClock.uptimeMillis();
+            mVirtualFnKeyDown = false;
+            // Enable the Fn state only if the key is still held after the long press delay
+            if (allowFn) {
+                View terminalView = mActivity.getTerminalView();
+                if (terminalView != null) {
+                    terminalView.postDelayed(this::enableFnKeyIfStillHeld, VOLUME_UP_LONG_PRESS_MS);
+                }
+            }
+        }
+        return true;
+    }
+
+    private void enableFnKeyIfStillHeld() {
+        if (mVolumeUpDownTime != 0) mVirtualFnKeyDown = true;
+    }
+
+    /** Raise the media volume, used when the volume up key opens the menu on a short press. */
+    private void raiseMediaVolume() {
+        try {
+            AudioManager audioManager = (AudioManager) mActivity.getSystemService(Context.AUDIO_SERVICE);
+            if (audioManager != null) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE,
+                    AudioManager.FLAG_SHOW_UI);
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to raise the media volume", e);
+        }
     }
 
 

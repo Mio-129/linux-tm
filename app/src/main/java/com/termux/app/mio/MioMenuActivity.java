@@ -28,6 +28,7 @@ import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.logger.Logger;
 
 import java.io.File;
+import java.util.List;
 
 /**
  * The "Mio menü" of this fork, shown as its own activity instead of a dialog.
@@ -52,6 +53,9 @@ public final class MioMenuActivity extends Activity {
 
     /** The scroll view of the panel, its position is kept when the panel is rebuilt. */
     private ScrollView mScrollView;
+
+    /** The name of the package that is selected in the "Paketler" section. */
+    private String mSelectedPackage;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -297,6 +301,19 @@ public final class MioMenuActivity extends Activity {
             });
         mRoot.addView(windowRow);
 
+        // A short press on the volume up key opens this panel, a long press stays the Fn key
+        LinearLayout menuKeyRow = newRow();
+        addButton(menuKeyRow, "Ses açma tuşu menü: " + (MioTextStyle.isMioMenuOnVolumeUp(this) ? "AÇIK" : "kapalı"),
+            v -> {
+                boolean enabled = !MioTextStyle.isMioMenuOnVolumeUp(this);
+                MioTextStyle.setMioMenuOnVolumeUp(this, enabled);
+                toast(enabled
+                    ? "Ses açma tuşuna kısa basınca menü açılacak."
+                    : "Ses açma tuşu menüyü açmayacak.");
+                buildPanel();
+            });
+        mRoot.addView(menuKeyRow);
+
         // --------------------------------------------------------------------- sessions -----
         addSection("Oturumlar ve diğer");
 
@@ -332,6 +349,7 @@ public final class MioMenuActivity extends Activity {
         mRoot.addView(toolsRow1);
 
         LinearLayout toolsRow2 = newRow();
+        addButton(toolsRow2, "Kod editörü", v -> showFileChooser());
         addButton(toolsRow2, "SSH başlat", v -> runCommand("pkg install -y openssh >/dev/null 2>&1; sshd"));
         addButton(toolsRow2, "X11 kur", v -> runCommand(
             "pkg install -y x11-repo >/dev/null 2>&1; pkg install -y termux-x11-nightly xfce4 >/dev/null 2>&1; echo X11 kuruldu"));
@@ -352,6 +370,133 @@ public final class MioMenuActivity extends Activity {
         addButton(ztRow2, "Yedeği geri yükle", v -> showRestoreDialog());
         addButton(ztRow2, "Beautify sıfırla", v -> confirmResetBeautify());
         mRoot.addView(ztRow2);
+
+        // ------------------------------------------------------------------- projects -----
+        addSection("Proje oluştur");
+
+        LinearLayout projectRow = newRow();
+        addButton(projectRow, "C", v -> createProject("c"));
+        addButton(projectRow, "Java", v -> createProject("java"));
+        addButton(projectRow, "Python", v -> createProject("python"));
+        mRoot.addView(projectRow);
+
+        LinearLayout projectRow2 = newRow();
+        addButton(projectRow2, "PHP", v -> createProject("php"));
+        addButton(projectRow2, "Node", v -> createProject("node"));
+        addButton(projectRow2, "Proje aç", v -> showOpenProjectDialog());
+        mRoot.addView(projectRow2);
+
+        // ------------------------------------------------------------------- terminal -----
+        addSection("Terminal ayarları");
+
+        LinearLayout shellRow = newRow();
+        addButton(shellRow, "Başlangıç dosyası", v -> showStartupFileDialog());
+        addButton(shellRow, "Karşılama mesajı", v -> showWelcomeMessageDialog());
+        addButton(shellRow, "Komut tanımı", v -> showAliasDialog());
+        mRoot.addView(shellRow);
+
+        LinearLayout shellRow2 = newRow();
+        addButton(shellRow2, "Alias'ları uygula", v -> applyAliases());
+        addButton(shellRow2, "Terminal menüsü", v -> showTerminalMenuEditor());
+        addButton(shellRow2, "Alt klavye tuşları", v -> MioEditorActivity.startFromContext(this,
+            "/data/data/com.termux/files/home/.termux/termux.properties"));
+        addButton(shellRow2, "Açılışta çalıştır", v -> showBootCommandDialog());
+        addButton(shellRow2, "SHELL çalıştır", v -> showShellRunDialog());
+        mRoot.addView(shellRow2);
+
+        // ---------------------------------------------------------------------- online -----
+        addSection("Çevrimiçi");
+
+        LinearLayout onlineRow = newRow();
+        addButton(onlineRow, "Wiki", v -> openUrl("https://wiki.zerotermux.dev"));
+        addButton(onlineRow, "Zero forum", v -> openUrl("https://bbs.zerotermux.dev"));
+        addButton(onlineRow, "Kaynak adresi", v -> openUrl("https://github.com/Mio-129/linux-tm"));
+        mRoot.addView(onlineRow);
+
+        // ------------------------------------------------------------------- zt tools -----
+        addSection("ZT işlevleri");
+
+        LinearLayout ztRow3 = newRow();
+        addButton(ztRow3, "FTP servisi", v -> showFtpDialog());
+        addButton(ztRow3, "ADB kablosuz", v -> showAdbDialog());
+        addButton(ztRow3, "SMS/Arama", v -> showSmsDialog());
+        mRoot.addView(ztRow3);
+
+        LinearLayout ztRow4 = newRow();
+        addButton(ztRow4, "Dizin aç", v -> showOpenPathDialog());
+        addButton(ztRow4, "Kısayollar", v -> showShortcutDialog());
+        addButton(ztRow4, "MOE All-in-One", v -> showMoeDialog());
+        mRoot.addView(ztRow4);
+
+        LinearLayout ztRow5 = newRow();
+        addButton(ztRow5, "Yüzen pencere", v -> showFloatingWindowDialog());
+        addButton(ztRow5, "Dil", v -> showLanguageDialog());
+        addButton(ztRow5, "Tema", v -> MioMenu.showColorMenuFor(this));
+        mRoot.addView(ztRow5);
+
+        // ----------------------------------------------------------------------- packages -----
+        addSection("Paketler");
+
+        List<MioPackages.Package> packages = MioPackages.getPackages();
+        List<MioPackages.Package> updatable = MioPackages.getUpdatablePackages();
+
+        addText(packages.isEmpty()
+            ? "Paket yok. ~/.mio/pkgs/<paket> klasörüne .a.sh, .b.sh ve .start-up.sh betiklerini koy."
+            : packages.size() + " paket • " + (updatable.isEmpty()
+                ? "hepsi güncel" : updatable.size() + " paket güncellenebilir"));
+
+        LinearLayout packageRow = newRow();
+        addButton(packageRow, "Paket " + (updatable.isEmpty() ? "güncelle" : "güncelle (" + updatable.size() + ")"),
+            v -> updateAllPackages());
+        addButton(packageRow, "Örnek oluştur", v -> createTemplatePackage());
+        addButton(packageRow, "Yenile", v -> buildPanel());
+        mRoot.addView(packageRow);
+
+        LinearLayout moduleRow = newRow();
+        addButton(moduleRow, "Modül kur (ZIP)", v -> showModuleDialog());
+        addButton(moduleRow, "Modül klasörü", v -> runCommand(
+            "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"));
+        addButton(moduleRow, "VNC", v -> showVncDialog());
+        mRoot.addView(moduleRow);
+
+        if (!packages.isEmpty()) {
+            MioPackages.Package selected = getSelectedPackage(packages);
+            addText("Seçili paket: " + (selected == null ? "yok" : selected.getSummary()));
+
+            LinearLayout packageSelectRow = newRow();
+            for (MioPackages.Package pkg : packages) {
+                boolean isSelected = selected != null && selected.name.equals(pkg.name);
+                addButton(packageSelectRow, (isSelected ? "• " : "") + pkg.name, v -> selectPackage(pkg.name));
+                if (packageSelectRow.getChildCount() >= 3) {
+                    mRoot.addView(packageSelectRow);
+                    packageSelectRow = newRow();
+                }
+            }
+            if (packageSelectRow.getChildCount() > 0) mRoot.addView(packageSelectRow);
+
+            if (selected != null) {
+                LinearLayout packageActionRow = newRow();
+                addButton(packageActionRow, selected.isInstalled() ? "Yeniden kur" : "Kur",
+                    v -> installPackageRemotely(selected));
+                addButton(packageActionRow, "Güncelle", v -> installPackageRemotely(selected));
+                addButton(packageActionRow, "Başlangıç", v -> runPackageStartUp(selected));
+                mRoot.addView(packageActionRow);
+
+                LinearLayout packageActionRow2 = newRow();
+                addButton(packageActionRow2, "Günlük", v -> showPackageLog(selected));
+                addButton(packageActionRow2, selected.isEnabled() ? "Kapat" : "Aç",
+                    v -> togglePackage(selected));
+                addButton(packageActionRow2, "Düzenle", v -> showPackageEditor(selected));
+                addButton(packageActionRow2, "Klasör", v -> showPackageFolder(selected));
+                mRoot.addView(packageActionRow2);
+
+                String remoteUrl = selected.getRemoteUrl();
+                if (remoteUrl != null) addText("Kurulum kaynağı: " + remoteUrl);
+
+                String logTail = selected.getLogTail(3);
+                if (!logTail.isEmpty()) addText("Son çalıştırma:\n" + logTail);
+            }
+        }
 
         // ------------------------------------------------------------------------ close -----
         LinearLayout closeRow = newRow();
@@ -545,6 +690,1089 @@ public final class MioMenuActivity extends Activity {
             .show();
     }
 
+    /* -------------------------------------------------------------------------------------- */
+    /* Paketler                                                                               */
+    /* -------------------------------------------------------------------------------------- */
+
+    /** The selected package, the first one if the selected one does not exist anymore. */
+    @Nullable
+    private MioPackages.Package getSelectedPackage(@NonNull List<MioPackages.Package> packages) {
+        if (packages.isEmpty()) return null;
+        if (mSelectedPackage != null) {
+            for (MioPackages.Package pkg : packages) {
+                if (pkg.name.equals(mSelectedPackage)) return pkg;
+            }
+        }
+        return packages.get(0);
+    }
+
+    private void selectPackage(@NonNull String name) {
+        mSelectedPackage = name;
+        buildPanel();
+    }
+
+    /**
+     * Install the package by running its remote script in the terminal.
+     *
+     * A package with a `URL` file (like Older-Pack, whose URL is
+     * `https://raw.githubusercontent.com/Mio-129/tm-pkg/main/older-pack`) is installed with
+     * `bash <(curl -s <url>)`, so that the output is shown in the terminal and the user can see the
+     * `pkg install` progress. The version is marked as installed right away, since the script runs in
+     * the terminal and the panel cannot wait for it.
+     */
+    private void installPackageRemotely(@NonNull MioPackages.Package pkg) {
+        final String url = pkg.getRemoteUrl();
+        if (url == null) {
+            // Without a URL the local scripts of the package are run
+            runPackage(pkg, true);
+            return;
+        }
+
+        final String command = "pkg install -y curl >/dev/null 2>&1; bash <(curl -s "
+            + MioPackages.quote(url) + ")";
+
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — kur")
+            .setMessage("Terminalde şu komut çalışacak:\n\n" + command
+                + "\n\nÇıktı terminalde görünecek.\nKaynak: " + url)
+            .setPositiveButton("Kur", (dialog, which) -> {
+                pkg.setInstalledVersion(pkg.getVersion() == null ? "1" : pkg.getVersion());
+                runCommand(command);
+            })
+            .setNeutralButton("Komutu kopyala", (dialog, which) -> {
+                android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mio", command));
+                    toast("Komut kopyalandı.");
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Install a package (or update it), then show the result. */
+    private void runPackage(@NonNull MioPackages.Package pkg, boolean update) {
+        toast((update ? "Güncelleniyor: " : "Kuruluyor: ") + pkg.name);
+        final MioPackageRunner.Result[] result = new MioPackageRunner.Result[1];
+        // The scripts can take a while, so they are run outside of the UI thread
+        new Thread(() -> {
+            result[0] = MioPackageRunner.install(pkg);
+            runOnUiThread(() -> {
+                toast(result[0].message);
+                if (!result[0].success) showPackageLog(pkg);
+                buildPanel();
+            });
+        }, "mio-package-install").start();
+    }
+
+    private void runPackageStartUp(@NonNull MioPackages.Package pkg) {
+        toast("start-up çalıştırılıyor: " + pkg.name);
+        new Thread(() -> {
+            final MioPackageRunner.Result result = MioPackageRunner.runStartUp(pkg);
+            runOnUiThread(() -> {
+                toast(result.message);
+                buildPanel();
+            });
+        }, "mio-package-start-up").start();
+    }
+
+    /** Install or update every package that has a new version. */
+    private void updateAllPackages() {
+        toast("Paketler güncelleniyor...");
+        new Thread(() -> {
+            final MioPackageRunner.Result result = MioPackageRunner.installAll();
+            runOnUiThread(() -> {
+                toast(result.message);
+                buildPanel();
+            });
+        }, "mio-package-update-all").start();
+    }
+
+    private void createTemplatePackage() {
+        MioPackages.Package pkg = MioPackageRunner.createTemplatePackage();
+        if (pkg == null) {
+            toast("Örnek paket oluşturulamadı: " + MioPackages.PACKAGE_DIR_PATH);
+            return;
+        }
+        mSelectedPackage = pkg.name;
+        toast(pkg.name + " oluşturuldu: .a.sh, .b.sh ve .start-up.sh");
+        buildPanel();
+    }
+
+    private void togglePackage(@NonNull MioPackages.Package pkg) {
+        boolean enabled = !pkg.isEnabled();
+        pkg.setEnabled(enabled);
+        toast(pkg.name + (enabled ? " açıldı (start-up çalışacak)." : " kapatıldı (start-up çalışmayacak)."));
+        buildPanel();
+    }
+
+    private void showPackageLog(@NonNull MioPackages.Package pkg) {
+        String log = pkg.getLogTail(60);
+        if (log.isEmpty()) log = "(günlük yok, paket henüz çalıştırılmadı)";
+
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — günlük")
+            .setMessage(log)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Terminalde aç", (dialog, which) -> runCommand(
+                "less " + MioPackages.quote(pkg.getLogFile().getAbsolutePath())))
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Modüller ve VNC (ZeroTermux)                                                           */
+    /* -------------------------------------------------------------------------------------- */
+
+    /**
+     * Install a ZeroTermux style module: a ZIP with an `INSTALL.txt` whose lines are
+     * `kaynak -> hedef -> izin`. The modules are picked from `~/.mio/modules` or from the gallery.
+     */
+    private void showModuleDialog() {
+        final java.util.List<File> modules = MioModuleInstaller.getModules();
+
+        if (modules.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setTitle("Modül kur")
+                .setMessage("~/.mio/modules klasörüne bir ZIP koy, içinde INSTALL.txt olsun.\n\n"
+                    + "Her satır: kaynak -> hedef -> izin\n"
+                    + "örnek: bin/foo -> /data/data/com.termux/files/usr/bin/foo -> 700")
+                .setPositiveButton("Galeriden seç", (dialog, which) -> pickModuleZip())
+                .setNeutralButton("Klasörü aç", (dialog, which) -> runCommand(
+                    "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+            return;
+        }
+
+        final String[] names = new String[modules.size()];
+        for (int i = 0; i < modules.size(); i++) names[i] = modules.get(i).getName();
+
+        new AlertDialog.Builder(this)
+            .setTitle("Modül kur — " + modules.size() + " modül")
+            .setItems(names, (dialog, which) -> installModule(modules.get(which)))
+            .setPositiveButton("Galeriden seç", (dialog, which) -> pickModuleZip())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private static final int PICK_MODULE_REQUEST_CODE = 1202;
+
+    private void pickModuleZip() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("application/zip");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(intent, "Modül ZIP seç"), PICK_MODULE_REQUEST_CODE);
+        } catch (Exception e) {
+            toast("Dosya seçici açılamadı: " + e);
+        }
+    }
+
+    /** Copy the picked ZIP to `~/.mio/modules` and install it. */
+    private void installPickedModule(@NonNull Uri uri) {
+        final File directory = new File(MioModuleInstaller.MODULE_DIR_PATH);
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            toast("Modül klasörü oluşturulamadı.");
+            return;
+        }
+
+        final String name = getDisplayName(uri);
+        final File target = new File(directory, name.endsWith(".zip") ? name : name + ".zip");
+        toast("Kopyalanıyor: " + target.getName());
+
+        new Thread(() -> {
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(target)) {
+                if (in != null) {
+                    byte[] buffer = new byte[65536];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to copy the module", e);
+            }
+
+            final boolean result = copied;
+            runOnUiThread(() -> {
+                if (result) {
+                    installModule(target);
+                } else {
+                    toast("Modül kopyalanamadı: " + target.getName());
+                }
+            });
+        }, "mio-module-copy").start();
+    }
+
+    /** Install the module in the background and show the log. */
+    private void installModule(@NonNull final File zipFile) {
+        toast("Modül kuruluyor: " + zipFile.getName());
+        new Thread(() -> {
+            final MioModuleInstaller.Result result = MioModuleInstaller.install(zipFile);
+            runOnUiThread(() -> new AlertDialog.Builder(this)
+                .setTitle(result.success ? "Modül kuruldu" : "Modül kurulamadı")
+                .setMessage(result.message)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> buildPanel())
+                .show());
+        }, "mio-module-install").start();
+    }
+
+    /** VNC: install and start a VNC server for the X11 desktop, like the VNC entry of ZeroTermux. */
+    private void showVncDialog() {
+        final String[] items = new String[]{
+            "TigerVNC kur (x11-repo)",
+            "VNC sunucusunu başlat (:1, 5901)",
+            "VNC sunucusunu durdur",
+            "Bağlantı adresi"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("VNC")
+            .setMessage("X11 masaüstünü telefondan veya bilgisayardan görüntülemek için.")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0:
+                        runCommand("pkg install -y x11-repo >/dev/null 2>&1; "
+                            + "pkg install -y tigervnc xfce4 >/dev/null 2>&1; echo 'TigerVNC kuruldu'");
+                        break;
+                    case 1:
+                        runCommand("pgrep -f Xvnc >/dev/null && echo 'VNC zaten çalışıyor' || "
+                            + "(vncserver :1 -geometry 1280x720 -depth 24 >/dev/null 2>&1 &); "
+                            + "sleep 2; echo 'VNC: 127.0.0.1:5901'");
+                        break;
+                    case 2:
+                        runCommand("vncserver -kill :1 2>/dev/null; echo 'VNC durduruldu'");
+                        break;
+                    default:
+                        runCommand("ip addr 2>/dev/null | grep 'inet ' | head -3; echo 'VNC portu: 5901'");
+                        break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Kod editörü                                                                            */
+    /* -------------------------------------------------------------------------------------- */
+
+    /** Paketin betiklerinden birini seçip editörde aç. */
+    private void showPackageEditor(@NonNull MioPackages.Package pkg) {
+        if (pkg.scripts.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setTitle(pkg.name + " — betik yok")
+                .setMessage("Pakette .sh dosyası yok.\n\nYeni bir .a.sh dosyası oluşturulsun mu?")
+                .setPositiveButton("Oluştur", (dialog, which) -> MioEditorActivity.startFromContext(this,
+                    new File(pkg.directory, pkg.name + MioPackages.SCRIPT_A_SUFFIX).getAbsolutePath()))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+            return;
+        }
+
+        final String[] labels = new String[pkg.scripts.size()];
+        for (int i = 0; i < pkg.scripts.size(); i++) {
+            labels[i] = pkg.scripts.get(i).getLabel() + " — " + pkg.scripts.get(i).file.getName();
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — düzenle")
+            .setItems(labels, (dialog, which) ->
+                MioEditorActivity.startFromContext(this, pkg.scripts.get(which).file.getAbsolutePath()))
+            .setNeutralButton("Yeni dosya", (dialog, which) -> showNewFileDialog(pkg.directory,
+                pkg.name + MioPackages.SCRIPT_A_SUFFIX))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Editörün açabileceği dosyalar: paket betikleri, ev dizinindeki .sh dosyaları ve ayarlar. */
+    private void showFileChooser() {
+        final java.util.List<File> files = MioEditorActivity.getScriptFiles();
+        files.add(new File("/data/data/com.termux/files/home/.termux/termux.properties"));
+        files.add(new File("/data/data/com.termux/files/home/.termux/colors.properties"));
+        files.add(new File("/data/data/com.termux/files/home/.bashrc"));
+
+        final String[] labels = new String[files.size()];
+        for (int i = 0; i < files.size(); i++) {
+            File file = files.get(i);
+            String directory = file.getParentFile() == null ? "" : file.getParentFile().getName();
+            labels[i] = directory + "/" + file.getName() + (file.isFile() ? "" : " (yok)");
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Kod editörü — dosya seç")
+            .setItems(labels, (dialog, which) ->
+                MioEditorActivity.startFromContext(this, files.get(which).getAbsolutePath()))
+            .setNeutralButton("Yeni dosya", (dialog, which) -> showNewFileDialog(
+                new File("/data/data/com.termux/files/home"), "yeni.sh"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Dosya adı sor ve editörü o dosya ile aç. */
+    private void showNewFileDialog(@NonNull final File directory, @NonNull String suggestion) {
+        final EditText input = new EditText(this);
+        input.setHint("dosya.sh");
+        input.setText(suggestion);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Yeni dosya — " + directory.getName())
+            .setMessage("Klasör: " + directory.getAbsolutePath())
+            .setView(input)
+            .setPositiveButton("Aç", (dialog, which) -> {
+                String name = input.getText().toString().trim();
+                if (name.isEmpty()) {
+                    toast("Dosya adı boş olamaz.");
+                    return;
+                }
+                if (name.contains("/")) {
+                    toast("Dosya adında / olamaz.");
+                    return;
+                }
+                MioEditorActivity.startFromContext(this, new File(directory, name).getAbsolutePath());
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Proje oluştur                                                                          */
+    /* -------------------------------------------------------------------------------------- */
+
+    private static final String HOME = "/data/data/com.termux/files/home";
+
+    /** Proje şablonları: klasör adı, örnek dosya adı ve içeriği. */
+    private void createProject(@NonNull String type) {
+        final EditText input = new EditText(this);
+        input.setHint("proje-adi");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+
+        final String[] fileNames = new String[]{"main.c", "Main.java", "main.py", "index.php", "index.js"};
+        final String[] labels = new String[]{"C", "Java", "Python", "PHP", "Node"};
+
+        new AlertDialog.Builder(this)
+            .setTitle("Yeni proje — " + type)
+            .setMessage("Klasör ~/projects/<ad> olarak oluşturulur.")
+            .setView(input)
+            .setPositiveButton("Oluştur", (dialog, which) -> {
+                String name = input.getText().toString().trim();
+                if (name.isEmpty()) {
+                    toast("Proje adı boş olamaz.");
+                    return;
+                }
+                final String projectName = name.replace("/", "_").replace(" ", "-");
+                final String path = HOME + "/projects/" + projectName;
+                final String typeName = type;
+
+                new Thread(() -> {
+                    StringBuilder log = new StringBuilder();
+                    boolean ok = new File(path).mkdirs() || new File(path).isDirectory();
+                    log.append(ok ? "Klasör: " + path + "\n" : "Klasör oluşturulamadı: " + path + "\n");
+
+                    String fileName = "README.md";
+                    String content = "# " + projectName + "\n";
+                    if (typeName.equals("c")) {
+                        fileName = "main.c";
+                        content = "#include <stdio.h>\n\nint main(void) {\n    printf(\"Merhaba\\n\");\n    return 0;\n}\n";
+                    } else if (typeName.equals("java")) {
+                        fileName = "Main.java";
+                        content = "public class Main {\n    public static void main(String[] args) {\n        System.out.println(\"Merhaba\");\n    }\n}\n";
+                    } else if (typeName.equals("python")) {
+                        fileName = "main.py";
+                        content = "#!/usr/bin/env python3\n\n\ndef main():\n    print(\"Merhaba\")\n\n\nif __name__ == \"__main__\":\n    main()\n";
+                    } else if (typeName.equals("php")) {
+                        fileName = "index.php";
+                        content = "<?php\necho \"Merhaba\\n\";\n";
+                    } else if (typeName.equals("node")) {
+                        fileName = "index.js";
+                        content = "console.log(\"Merhaba\");\n";
+                    }
+
+                    if (ok) {
+                        try (java.io.FileOutputStream out =
+                                 new java.io.FileOutputStream(new File(path, fileName))) {
+                            out.write(content.getBytes("UTF-8"));
+                            log.append("Dosya: ").append(fileName).append('\n');
+                        } catch (Exception e) {
+                            log.append("Dosya yazılamadı: ").append(e).append('\n');
+                        }
+                    }
+
+                    final String message = log.toString();
+                    final String openPath = path + "/" + fileName;
+                    runOnUiThread(() -> {
+                        toast(message.replace('\n', ' ').trim());
+                        new AlertDialog.Builder(this)
+                            .setTitle("Proje hazır")
+                            .setMessage(message)
+                            .setPositiveButton("Düzenle", (d, w) ->
+                                MioEditorActivity.startFromContext(this, openPath))
+                            .setNegativeButton("Tamam", null)
+                            .show();
+                    });
+                }, "mio-create-project").start();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** ~/projects altındaki projeleri listeler, seçilen klasörü terminalde açar. */
+    private void showOpenProjectDialog() {
+        final File projects = new File(HOME, "projects");
+        final File[] directories = projects.listFiles(File::isDirectory);
+        if (directories == null || directories.length == 0) {
+            toast("Proje yok. Önce Proje oluştur.");
+            return;
+        }
+
+        final String[] names = new String[directories.length];
+        for (int i = 0; i < directories.length; i++) names[i] = directories[i].getName();
+
+        new AlertDialog.Builder(this)
+            .setTitle("Proje aç")
+            .setItems(names, (dialog, which) -> runCommand("cd " + MioPackages.quote(
+                directories[which].getAbsolutePath()) + " && ls -la"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Terminal ayarları                                                                      */
+    /* -------------------------------------------------------------------------------------- */
+
+    /**
+     * Başlangıç dosyası: hangi dosyanın açılışta çalıştırılacağını `termux.properties` içindeki
+     * `shell-startup-command` ile değiştirir, dosya yoksa oluşturur.
+     */
+    private void showStartupFileDialog() {
+        final String[] items = new String[]{
+            "~/.bashrc (varsayılan)",
+            "~/.profile",
+            "~/.termux/shell-startup.sh (özel)",
+            "Şu anki dosyayı düzenle"
+        };
+
+        new AlertDialog.Builder(this)
+            .setTitle("Başlangıç dosyası")
+            .setItems(items, (dialog, which) -> {
+                String path;
+                if (which == 3) {
+                    String current = MioTextStyle.getProperty("shell-startup-command");
+                    path = current == null ? HOME + "/.bashrc" : expandPath(current);
+                    MioEditorActivity.startFromContext(this, path);
+                    return;
+                }
+                path = which == 0 ? HOME + "/.bashrc"
+                    : which == 1 ? HOME + "/.profile"
+                    : HOME + "/.termux/shell-startup.sh";
+
+                File file = new File(path);
+                if (!file.isFile()) {
+                    try {
+                        File parent = file.getParentFile();
+                        if (parent != null && !parent.isDirectory()) parent.mkdirs();
+                        if (file.createNewFile()) file.setExecutable(true, false);
+                    } catch (Exception e) {
+                        toast("Dosya oluşturulamadı: " + e);
+                        return;
+                    }
+                }
+                toast("Başlangıç dosyası: " + file.getName());
+                MioEditorActivity.startFromContext(this, path);
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /**
+     * Append the line to the file if it is not there yet, created for the `# mio ...` blocks of the
+     * terminal section. If {@code marker} is {@code null}, the line is added when it is not present.
+     */
+    private void appendLineOnce(@NonNull String path, @Nullable String marker, @NonNull String line) {
+        File file = new File(path);
+        String existing = file.isFile() ? readTextFile(file) : "";
+        if (marker != null && existing.contains(marker)) {
+            toast("Zaten ekli: " + marker);
+            return;
+        }
+        if (marker == null && existing.contains(line)) {
+            toast("Zaten ekli.");
+            return;
+        }
+
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(file, true)) {
+            out.write(((marker == null ? "" : "\n" + marker + "\n") + line + "\n").getBytes("UTF-8"));
+        } catch (Exception e) {
+            toast("~/.bashrc yazılamadı: " + e);
+        }
+    }
+
+    @NonNull
+    private String expandPath(@NonNull String path) {
+        return path.startsWith("~") ? HOME + path.substring(1) : path;
+    }
+
+    /** Karşılama mesajını ~/.mio/welcome içine yazar ve .bashrc'ye ekler. */
+    private void showWelcomeMessageDialog() {
+        final File welcomeFile = new File(HOME, ".mio/welcome");
+        final EditText input = new EditText(this);
+        input.setHint("Termux'a hoş geldin!");
+        input.setSingleLine(false);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        if (welcomeFile.isFile()) {
+            String current = readTextFile(welcomeFile);
+            if (!current.isEmpty()) input.setText(current);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Karşılama mesajı")
+            .setMessage("~/.bashrc içine eklenecek, her oturumda gösterilir.")
+            .setView(input)
+            .setPositiveButton("Kaydet", (dialog, which) -> {
+                String message = input.getText().toString().trim();
+                File parent = welcomeFile.getParentFile();
+                if (parent != null && !parent.isDirectory()) parent.mkdirs();
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(welcomeFile)) {
+                    out.write(message.getBytes("UTF-8"));
+                } catch (Exception e) {
+                    toast("Yazılamadı: " + e);
+                    return;
+                }
+
+                appendLineOnce(HOME + "/.bashrc", "# mio welcome",
+                    "[ -f ~/.mio/welcome ] && cat ~/.mio/welcome");
+                toast("Karşılama mesajı kaydedildi.");
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    @NonNull
+    private static String readTextFile(@NonNull File file) {
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+            new java.io.InputStreamReader(new java.io.FileInputStream(file), "UTF-8"))) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (builder.length() > 0) builder.append('\n');
+                builder.append(line);
+            }
+            return builder.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Komut tanımı (alias) ekler ve ~/.bashrc'ye yazar. */
+    /**
+     * Apply the alias lines of `~/.bashrc` (and of the files that are sourced from it) to the
+     * commands of the fork: the lines are collected in `~/.mio/aliases`, a `mio-alias` command is
+     * installed to `$PREFIX/bin`, and `~/.bashrc` gets one line that sources the file, so that the
+     * aliases are available in every new session and in the code editor.
+     */
+    private void applyAliases() {
+        final File bashrc = new File(HOME, ".bashrc");
+        if (!bashrc.isFile()) {
+            toast("~/.bashrc yok. Önce Başlangıç dosyası oluştur.");
+            return;
+        }
+
+        final File aliasesFile = new File(HOME, ".mio/aliases");
+        final File parent = aliasesFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            toast("~/.mio klasörü oluşturulamadı.");
+            return;
+        }
+
+        new Thread(() -> {
+            StringBuilder collected = new StringBuilder();
+            int count = 0;
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(new java.io.FileInputStream(bashrc), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("alias ")) {
+                        collected.append(trimmed).append('\n');
+                        count++;
+                    }
+                }
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read ~/.bashrc", e);
+                runOnUiThread(() -> toast("~/.bashrc okunamadı: " + e));
+                return;
+            }
+
+            final int found = count;
+            if (count == 0) {
+                runOnUiThread(() -> toast("~/.bashrc içinde alias satırı yok."));
+                return;
+            }
+
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(aliasesFile)) {
+                out.write(("# mio alias listesi — " + new java.util.Date() + "\n" + collected).getBytes("UTF-8"));
+            } catch (Exception e) {
+                runOnUiThread(() -> toast("~/.mio/aliases yazılamadı: " + e));
+                return;
+            }
+
+            // The source line is added once, so that a new session sees the aliases
+            appendLineOnce(HOME + "/.bashrc", "# mio aliases", "[ -f ~/.mio/aliases ] && . ~/.mio/aliases");
+
+
+            runOnUiThread(() -> {
+                toast(found + " alias ~/.mio/aliases dosyasına yazıldı.");
+                new AlertDialog.Builder(this)
+                    .setTitle("Alias'lar")
+                    .setMessage(collected.toString().trim()
+                        + "\n\nTerminalde hemen kullanmak için:\nsource ~/.bashrc")
+                    .setPositiveButton("Yeni oturum", (dialog, which) -> {
+                        TermuxActivity activity = TermuxActivity.getInstance();
+                        if (activity == null) {
+                            toast("Termux ekranı açık değil.");
+                            return;
+                        }
+                        activity.getTermuxTerminalSessionClient().addNewSession(false, null);
+                        finish();
+                    })
+                    .setNeutralButton("Terminal", (dialog, which) -> finish())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            });
+        }, "mio-apply-aliases").start();
+    }
+
+    private void showAliasDialog() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20), dp(12), dp(20), 0);
+
+        final EditText nameInput = new EditText(this);
+        nameInput.setHint("kısayol adı, örnek: ll");
+        nameInput.setSingleLine(true);
+        layout.addView(nameInput);
+
+        final EditText commandInput = new EditText(this);
+        commandInput.setHint("komut, örnek: ls -alF");
+        commandInput.setSingleLine(true);
+        layout.addView(commandInput);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Komut tanımı")
+            .setView(layout)
+            .setPositiveButton("Ekle", (dialog, which) -> {
+                String name = nameInput.getText().toString().trim();
+                String command = commandInput.getText().toString().trim();
+                if (name.isEmpty() || command.isEmpty()) {
+                    toast("Ad ve komut gerekli.");
+                    return;
+                }
+                if (!name.matches("[A-Za-z0-9_.-]+")) {
+                    toast("Ad sadece harf, rakam, _ . - içerebilir.");
+                    return;
+                }
+                appendLineOnce(HOME + "/.bashrc", null,
+                    "alias " + name + "=\"" + command.replace("\"", "\\\"") + "\"");
+                toast("Komut tanımı eklendi: " + name + " (yeni oturumda geçerli)");
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Açılışta çalışacak komutları ~/.mio/boot-cmd içine yazar, .bashrc'den çalıştırılır. */
+    private void showBootCommandDialog() {
+        final File bootFile = new File(HOME, ".mio/boot-cmd");
+        final EditText input = new EditText(this);
+        input.setHint("sshd\ntermux-x11 :0 &");
+        input.setSingleLine(false);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        if (bootFile.isFile()) {
+            String current = readTextFile(bootFile);
+            if (!current.isEmpty()) input.setText(current);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Açılışta çalıştır")
+            .setMessage("Bu komutlar Termux her açıldığında çalışır.")
+            .setView(input)
+            .setPositiveButton("Kaydet", (dialog, which) -> {
+                File parent = bootFile.getParentFile();
+                if (parent != null && !parent.isDirectory()) parent.mkdirs();
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(bootFile)) {
+                    out.write(input.getText().toString().getBytes("UTF-8"));
+                } catch (Exception e) {
+                    toast("Yazılamadı: " + e);
+                    return;
+                }
+                appendLineOnce(HOME + "/.bashrc", "# mio boot",
+                    "[ -f ~/.mio/boot-cmd ] && sh ~/.mio/boot-cmd");
+                toast("Açılış komutları kaydedildi.");
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Tek seferlik bir shell komutu çalıştırır, çıktıyı gösterir. */
+    private void showShellRunDialog() {
+        final EditText input = new EditText(this);
+        input.setHint("echo merhaba");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+
+        new AlertDialog.Builder(this)
+            .setTitle("SHELL çalıştır")
+            .setView(input)
+            .setPositiveButton("Çalıştır", (dialog, which) -> {
+                String command = input.getText().toString().trim();
+                if (command.isEmpty()) {
+                    toast("Komut boş.");
+                    return;
+                }
+                runCommand(command);
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Çevrimiçi ve ZT işlevleri                                                              */
+    /* -------------------------------------------------------------------------------------- */
+
+    private void openUrl(@NonNull String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            toast("Bağlantı açılamadı: " + url);
+        }
+    }
+
+    /**
+     * MOE All-in-One: the all in one installer of the MOE community, which is run with the same
+     * command as the `MOE全能` entry of ZeroTermux (`CodeString.runMoeSh`).
+     */
+    private void showMoeDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("MOE All-in-One")
+            .setMessage("MOE, Termux içine hazır bir Linux ortamı kuran topluluk kurulumudur.\n\n"
+                + "Kurulum internetten indirilir ve uzun sürebilir. Devam edilsin mi?")
+            .setPositiveButton("Kur", (dialog, which) -> runCommand(
+                "pkg install -y curl; bash -c \"$(curl -L gitee.com/mo2/linux/raw/2/2)\""))
+            .setNeutralButton("Durum", (dialog, which) -> runCommand(
+                "command -v moe >/dev/null && echo 'MOE kurulu' || echo 'MOE kurulu değil'; "
+                    + "ls -d ~/moe ~/MOE 2>/dev/null"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /**
+     * Floating window: starts the floating window app of ZeroTermux, which is a separate plugin
+     * (`com.zero_float.action.ENTER`), and explains how to get it when it is not installed.
+     */
+    private void showFloatingWindowDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("Yüzen pencere")
+            .setMessage("Terminali küçük bir pencere olarak diğer uygulamaların üzerinde gösterir.\n\n"
+                + "ZeroTermux'un yüzen pencere eklentisi kurulu olmalı.")
+            .setPositiveButton("Başlat", (dialog, which) -> {
+                try {
+                    Intent intent = new Intent("com.zero_float.action.ENTER");
+                    startActivity(intent);
+                } catch (Exception e) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("Eklenti bulunamadı")
+                        .setMessage("Yüzen pencere eklentisi (zero_float) kurulu değil.\n\n"
+                            + "Alternatif: terminali bölünmüş ekranda kullanabilir veya "
+                            + "Android'in kendi serbest pencere modunu açabilirsin.\n\n"
+                            + "Hata: " + e.getClass().getSimpleName())
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show();
+                }
+            })
+            .setNeutralButton("Bölünmüş ekran", (dialog, which) -> showSplitScreenHint())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showSplitScreenHint() {
+        new AlertDialog.Builder(this)
+            .setTitle("Bölünmüş ekran")
+            .setMessage("Uygulama değiştiriciyi aç (son uygulamalar), Termux'un simgesine uzun bas "
+                + "ve \"Bölünmüş ekranda aç\" seç. Böylece terminal başka bir uygulamayla aynı ekranı "
+                + "paylaşır.")
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    /**
+     * Language: the panel is Turkish; this switches the X11/Termux messages between Turkish and
+     * English by setting `LANG` in `~/.mio/lang`, which is sourced from `~/.bashrc`.
+     */
+    private void showLanguageDialog() {
+        final String[] items = new String[]{
+            "Türkçe (tr_TR.UTF-8)",
+            "English (en_US.UTF-8)",
+            "Önceki ayarı göster",
+            "Sistem dillerini listele"
+        };
+
+        new AlertDialog.Builder(this)
+            .setTitle("Dil")
+            .setMessage("Komut satırı iletileri için dil ayarı (~/.mio/lang).")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: setLanguage("tr_TR.UTF-8"); break;
+                    case 1: setLanguage("en_US.UTF-8"); break;
+                    case 2: runCommand("cat ~/.mio/lang 2>/dev/null || echo 'Dil ayarlanmadı'"); break;
+                    default: runCommand("locale -a 2>/dev/null | head -20"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Write the `LANG` of the passed locale to `~/.mio/lang` and source it from `~/.bashrc`. */
+    private void setLanguage(@NonNull String locale) {
+        final File langFile = new File(HOME, ".mio/lang");
+        final File parent = langFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            toast("~/.mio klasörü oluşturulamadı.");
+            return;
+        }
+
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(langFile)) {
+            out.write(("# mio dil ayarı\nexport LANG=" + locale + "\n"
+                + "export LC_ALL=" + locale + "\n").getBytes("UTF-8"));
+        } catch (Exception e) {
+            toast("Dil ayarı yazılamadı: " + e);
+            return;
+        }
+
+        appendLineOnce(HOME + "/.bashrc", "# mio lang", "[ -f ~/.mio/lang ] && . ~/.mio/lang");
+        toast("Dil: " + locale + " (yeni oturumda geçerli)");
+    }
+
+    /** `~/.mio/menu.d` klasörünü açar; menü dosyaları `etiket|komut` satırlarından oluşur. */
+    private void showTerminalMenuEditor() {
+        final File menuDir = new File(HOME, ".mio/menu.d");
+        if (!menuDir.isDirectory() && !menuDir.mkdirs()) {
+            toast("~/.mio/menu.d oluşturulamadı.");
+            return;
+        }
+
+        final File[] files = menuDir.listFiles((dir, name) -> name.endsWith(".menu"));
+        final java.util.List<File> menuFiles = new java.util.ArrayList<>();
+        if (files != null) {
+            for (File file : files) menuFiles.add(file);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Terminal menüsü")
+            .setMessage("Terminalde `mio menu` yazarak açılır.\n"
+                + "Her satır: etiket|komut\n"
+                + "örnek: Yedek al|tar -czf ~/yedek.tar.gz ~/projects\n\n"
+                + "Klasör: " + menuDir.getAbsolutePath() + "\n"
+                + "Dosya: " + menuFiles.size())
+            .setPositiveButton("Düzenle", (dialog, which) -> {
+                if (menuFiles.isEmpty()) {
+                    MioEditorActivity.startFromContext(this,
+                        new File(menuDir, "varsayilan.menu").getAbsolutePath());
+                } else {
+                    final String[] names = new String[menuFiles.size()];
+                    for (int i = 0; i < menuFiles.size(); i++) names[i] = menuFiles.get(i).getName();
+                    new AlertDialog.Builder(this)
+                        .setTitle("Menü dosyası")
+                        .setItems(names, (d, index) -> MioEditorActivity.startFromContext(this,
+                            menuFiles.get(index).getAbsolutePath()))
+                        .setNeutralButton("Yeni dosya", (d, w) -> MioEditorActivity.startFromContext(
+                            this, new File(menuDir, "ozel.menu").getAbsolutePath()))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+                }
+            })
+            .setNeutralButton("Varsayılanı oluştur", (dialog, which) -> runCommand(
+                "mkdir -p ~/.mio/menu.d && [ -f ~/.mio/menu.d/varsayilan.menu ] || "
+                    + "printf '# etiket|komut\nKar animasyonu|mio kar\nPaketler|mio paket\n' "
+                    + "> ~/.mio/menu.d/varsayilan.menu; ls -l ~/.mio/menu.d"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showFtpDialog() {
+        final String[] items = new String[]{
+            "FTP sunucusu kur (pyftpdlib)",
+            "FTP'yi başlat (2121, ~)",
+            "FTP'yi durdur"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("FTP servisi")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: runCommand("pkg install -y python && pip install pyftpdlib"); break;
+                    case 1: runCommand("pgrep -f pyftpdlib >/dev/null || "
+                        + "(python -m pyftpdlib -p 2121 -d ~ >/dev/null 2>&1 &); sleep 1; echo FTP hazır: ftp://127.0.0.1:2121"); break;
+                    default: runCommand("pkill -f pyftpdlib; echo 'FTP durduruldu'"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showAdbDialog() {
+        final String[] items = new String[]{
+            "android-tools kur",
+            "Kablosuz ADB'yi aç (5555)",
+            "Kablosuz ADB'yi kapat",
+            "Bağlı cihazları listele"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("ADB")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: runCommand("pkg install -y android-tools"); break;
+                    case 1: runCommand("setprop service.adb.tcp.port 5555; stop adbd; start adbd; "
+                        + "echo 'ADB kablosuz açıldı (root gerekir)'"); break;
+                    case 2: runCommand("setprop service.adb.tcp.port -1; stop adbd; start adbd; echo 'ADB kapandı'"); break;
+                    default: runCommand("adb devices -l"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showSmsDialog() {
+        final String[] items = new String[]{
+            "SMS gönder (termux-api)",
+            "Arama geçmişi (termux-api)",
+            "termux-api kur"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("SMS / Arama")
+            .setMessage("Termux:API uygulaması kurulu olmalı.")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: showSmsComposeDialog(); break;
+                    case 1: runCommand("termux-call-log 2>/dev/null | head -20"); break;
+                    default: runCommand("pkg install -y termux-api"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showSmsComposeDialog() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20), dp(12), dp(20), 0);
+
+        final EditText numberInput = new EditText(this);
+        numberInput.setHint("telefon numarası");
+        numberInput.setSingleLine(true);
+        numberInput.setInputType(InputType.TYPE_CLASS_PHONE);
+        layout.addView(numberInput);
+
+        final EditText textInput = new EditText(this);
+        textInput.setHint("mesaj");
+        layout.addView(textInput);
+
+        new AlertDialog.Builder(this)
+            .setTitle("SMS gönder")
+            .setView(layout)
+            .setPositiveButton("Gönder", (dialog, which) -> {
+                String number = numberInput.getText().toString().trim();
+                String text = textInput.getText().toString().trim();
+                if (number.isEmpty() || text.isEmpty()) {
+                    toast("Numara ve mesaj gerekli.");
+                    return;
+                }
+                runCommand("termux-sms-send -n " + MioPackages.quote(number) + " "
+                    + MioPackages.quote(text));
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showOpenPathDialog() {
+        final String[] items = new String[]{
+            "Ana dizin (~)",
+            "Projeler (~/projects)",
+            "Paketler (~/.mio/pkgs)",
+            "Termux ayarları (~/.termux)"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("Dizin aç")
+            .setItems(items, (dialog, which) -> {
+                String path = which == 0 ? HOME
+                    : which == 1 ? HOME + "/projects"
+                    : which == 2 ? MioPackages.PACKAGE_DIR_PATH
+                    : HOME + "/.termux";
+                runCommand("cd " + MioPackages.quote(path) + " && ls -la");
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showShortcutDialog() {
+        final String[] items = new String[]{
+            "~/.mio/bin içine kısayol oluştur",
+            "Kısayolları listele",
+            "Örnek: hızlı yedek"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("Kısayollar")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: showNewShortcutDialog(); break;
+                    case 1: runCommand("ls -l ~/.mio/bin 2>/dev/null || echo 'Henüz kısayol yok'"); break;
+                    default: runCommand("mkdir -p ~/.mio/bin && "
+                        + "printf '#!/data/data/com.termux/files/usr/bin/sh\ntar -czf ~/yedek-$(date +%%Y%%m%%d).tar.gz ~/projects\n' "
+                        + "> ~/.mio/bin/hizli-yedek && chmod +x ~/.mio/bin/hizli-yedek; echo 'hizli-yedek oluşturuldu'"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showNewShortcutDialog() {
+        final EditText nameInput = new EditText(this);
+        nameInput.setHint("kisayol-adi");
+        nameInput.setSingleLine(true);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Yeni kısayol")
+            .setMessage("~/.mio/bin/<ad> oluşturulur ve editörde açılır.")
+            .setView(nameInput)
+            .setPositiveButton("Oluştur", (dialog, which) -> {
+                String name = nameInput.getText().toString().trim();
+                if (name.isEmpty()) {
+                    toast("Ad boş olamaz.");
+                    return;
+                }
+                if (!name.matches("[A-Za-z0-9_.-]+")) {
+                    toast("Ad sadece harf, rakam, _ . - içerebilir.");
+                    return;
+                }
+                MioEditorActivity.startFromContext(this, HOME + "/.mio/bin/" + name);
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+
+    private void showPackageFolder(@NonNull MioPackages.Package pkg) {
+        String path = pkg.directory.getAbsolutePath();
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — klasör")
+            .setMessage(path + "\n\nDosyalar: " + pkg.scripts.size() + " betik")
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Terminalde aç", (dialog, which) -> runCommand(
+                "cd " + MioPackages.quote(path) + " && ls -l"))
+            .show();
+    }
+
     private void toast(@NonNull String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
@@ -668,6 +1896,8 @@ public final class MioMenuActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PICK_MEDIA_REQUEST_CODE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             copyAndSetMedia(data.getData());
+        } else if (requestCode == PICK_MODULE_REQUEST_CODE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installPickedModule(data.getData());
         }
     }
 

@@ -76,6 +76,18 @@ public class TermuxApplication extends Application {
         // Install the custom `swset` and `so` commands to $PREFIX/bin, if the prefix exists. This is
         // also called after the bootstrap is extracted, see `TermuxInstaller`
         MioBootstrap.install(this);
+
+        // Run the `*.start-up.sh` scripts of the packages of the "Paketler" section of the Mio menu,
+        // in the background, so that the start of the app is not delayed by them
+        if (isTermuxFilesDirectoryAccessible) {
+            new Thread(() -> {
+                try {
+                    com.termux.app.mio.MioPackageRunner.runEnabledStartUpScripts();
+                } catch (Exception e) {
+                    Logger.logStackTraceWithMessage(LOG_TAG, "Failed to run the start-up scripts of the packages", e);
+                }
+            }, "mio-package-start-up").start();
+        }
     }
 
     public static void setLogConfig(Context context) {
