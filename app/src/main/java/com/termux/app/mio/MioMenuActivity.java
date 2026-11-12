@@ -223,12 +223,22 @@ public final class MioMenuActivity extends Activity {
         LinearLayout animationRow = newRow();
         addButton(animationRow, "Kar: " + (animationMode == MioParticleView.Mode.SNOW ? "AÇIK" : "kapalı"),
             v -> {
-                MioMenu.toggleSnow(this);
+                TermuxActivity activity = TermuxActivity.getInstance();
+                if (activity == null) {
+                    toast("Termux ekranı açık değil.");
+                    return;
+                }
+                MioMenu.toggleSnow(activity);
                 buildPanel();
             });
         addButton(animationRow, "Parçacık: " + (animationMode == MioParticleView.Mode.PARTICLES ? "AÇIK" : "kapalı"),
             v -> {
-                MioMenu.toggleParticles(this);
+                TermuxActivity activity = TermuxActivity.getInstance();
+                if (activity == null) {
+                    toast("Termux ekranı açık değil.");
+                    return;
+                }
+                MioMenu.toggleParticles(activity);
                 buildPanel();
             });
         addButton(animationRow, "Kapat", v -> {

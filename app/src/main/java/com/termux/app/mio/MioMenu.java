@@ -98,34 +98,6 @@ public final class MioMenu {
         }
     }
 
-    /** Show the current state of the background, the animation, the font and the colors. */
-    private static void showStatusDialog(@NonNull TermuxActivity activity) {
-        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
-        StringBuilder message = new StringBuilder();
-
-        if (backgroundView == null || !backgroundView.hasMedia()) {
-            message.append("Arka plan: siyah (medya yok)");
-        } else {
-            File media = backgroundView.getMediaFile();
-            message.append("Arka plan: ").append(backgroundView.isVideo() ? "video" : "fotoğraf")
-                .append(" — ").append(media == null ? "?" : media.getName());
-            if (backgroundView.isVideo())
-                message.append("\nSes: ").append(backgroundView.isAudioEnabled() ? "açık" : "kapalı");
-        }
-
-        MioParticleView.Mode mode = backgroundView == null ? MioParticleView.Mode.NONE : backgroundView.getAnimationMode();
-        message.append("\nAnimasyon: ").append(mode == MioParticleView.Mode.NONE ? "kapalı" :
-            mode == MioParticleView.Mode.SNOW ? "kar" : "parçacık");
-        message.append("\nYazı boyutu: ").append(MioTextStyle.getFontSize(activity));
-        message.append("\nTam ekran: ").append(readFullScreen(activity) ? "açık" : "kapalı");
-        message.append("\nSes tuşları: ").append(readVolumeKeysEnabled(activity) ? "medya sesi" : "terminal kısayolu");
-
-        new AlertDialog.Builder(activity)
-            .setTitle(R.string.mio_menu_status_title)
-            .setMessage(message.toString())
-            .setPositiveButton(android.R.string.ok, null)
-            .show();
-    }
 
     /** Turn the audio of the background video on or off, the same as the `so` and `so off` commands. */
     private static void toggleVideoAudio(@NonNull TermuxActivity activity) {
@@ -155,38 +127,6 @@ public final class MioMenu {
             : "Ses tuşları terminal kısayolu (Ctrl/Esc) olarak çalışır.");
     }
 
-    /** Show the version of the app and of the installed commands, and the state of the background. */
-    private static void showAboutDialog(@NonNull TermuxActivity activity) {
-        StringBuilder message = new StringBuilder();
-        message.append("Uygulama: ").append(com.termux.BuildConfig.VERSION_NAME)
-            .append(" (").append(com.termux.BuildConfig.VERSION_CODE).append(")\n");
-
-        MioMediaBackgroundView backgroundView = activity.getMioMediaBackgroundView();
-        message.append("Menü: ").append(backgroundView == null ? "arka plan görünümü YOK" : "hazır").append('\n');
-        if (backgroundView != null) {
-            message.append("Animasyon: ").append(backgroundView.getAnimationMode()).append('\n');
-            File media = backgroundView.getMediaFile();
-            message.append("Medya: ").append(media == null ? "yok" : media.getName()).append('\n');
-        }
-
-        message.append("\nKurulu komutlar:\n");
-        for (String command : new String[]{"swset", "so", "mio"}) {
-            File file = new File(com.termux.shared.termux.TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, command);
-            message.append("  ").append(command).append(": ")
-                .append(file.isFile() ? "var (" + file.length() + " bayt)" : "YOK").append('\n');
-        }
-
-        // Reading the installed commands is fast, but reading their content is not, so only the
-        // presence and the size are shown. The full check is done by `mio teshis`.
-        message.append("\nAyrıntılı kontrol için terminalde: mio teshis");
-
-        new AlertDialog.Builder(activity)
-            .setTitle(R.string.mio_menu_about_title)
-            .setMessage(message.toString())
-            .setPositiveButton(android.R.string.ok, null)
-            .setNeutralButton(R.string.mio_menu_run_command, (dialog, which) -> showRunCommandDialog(activity))
-            .show();
-    }
 
     /* ---------------------------------------------------------------------------------------- */
     /* Background media                                                                          */
@@ -564,7 +504,7 @@ public final class MioMenu {
     }
 
     /** Ask for an arbitrary command and run it in the current session. */
-    private static void showRunCommandDialog(@NonNull TermuxActivity activity) {
+    private static void showRunCommandDialog(@NonNull android.app.Activity activity) {
         EditText input = new EditText(activity);
         input.setHint("mio kay");
         input.setSingleLine(true);
@@ -575,7 +515,13 @@ public final class MioMenu {
             .setPositiveButton(R.string.mio_menu_run, (dialog, which) -> {
                 String command = input.getText().toString().trim();
                 if (command.isEmpty()) return;
-                runCommand(activity, command);
+                TermuxActivity terminalActivity = TermuxActivity.getInstance();
+                if (terminalActivity == null) {
+                    Toast.makeText(activity, "Termux ekranı açık değil.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                runCommand(terminalActivity, command);
+                if (activity != terminalActivity) activity.finish();
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
