@@ -40,7 +40,22 @@ jobs:
         run: |
           set -e
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log
+          exit "${PIPESTATUS[0]}"
+
+      # Surface the compile errors as annotations since the job logs are not always downloadable
+      - name: Report compile errors as annotations
+        if: failure()
+        shell: bash {0}
+        run: |
+          grep -E "^(e:|error:)|^/.*\.java:[0-9]+: error" /tmp/gradle.log 2>/dev/null | head -30 | \
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          echo "--- last 40 lines ---"
+          tail -40 /tmp/gradle.log 2>/dev/null | while IFS= read -r line; do
+            echo "::error::$line"
+          done
 
       - name: Show APK files
         if: always()
