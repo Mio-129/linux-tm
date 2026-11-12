@@ -173,6 +173,20 @@ public final class MioTextStyle {
         return setProperty("mio-menu-on-keyboard-long-press", enabled ? "true" : "false");
     }
 
+    /**
+     * @return Returns {@code true} if a short press on the volume up key opens the Mio menu of the
+     * fork, which is enabled by default, since the menu is otherwise two gestures away. A long
+     * press on the key still works as the Fn key of the terminal.
+     */
+    public static boolean isMioMenuOnVolumeUp(@NonNull Context context) {
+        return !"false".equals(getProperty("mio-menu-on-volume-up"));
+    }
+
+    /** Enable or disable opening the Mio menu with a short press on the volume up key. */
+    public static boolean setMioMenuOnVolumeUp(@NonNull Context context, boolean enabled) {
+        return setProperty("mio-menu-on-volume-up", enabled ? "true" : "false");
+    }
+
     /* ---------------------------------------------------------------------------------------- */
     /* Colors                                                                                   */
     /* ---------------------------------------------------------------------------------------- */

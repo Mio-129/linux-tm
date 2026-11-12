@@ -134,6 +134,11 @@ diagnose() {
         printf '  menü komutu GÖNDERİLEMEDİ. Uygulamayı aç ve tekrar dene.\n'
     fi
 
+    printf '\nKısayol: ses açma tuşuna kısa basmak da menüyü açar (uzun basış Fn olarak kalır).\n'
+    if [ -f "$HOME/.termux/termux.properties" ] && grep -q '^mio-menu-on-volume-up=false' "$HOME/.termux/termux.properties" 2>/dev/null; then
+        printf 'UYARI: ses açma tuşu kısayolu kapalı (termux.properties > mio-menu-on-volume-up=false).\n'
+    fi
+
     printf '\nNot: menü hâlâ açılmıyorsa uygulamanın bu sürümü kurulu olmayabilir.\n'
     printf 'APK: Termux > uzun bas > Sürüm ve teşhis (Mio menü içinde)\n'
 }

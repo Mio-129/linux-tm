@@ -297,6 +297,19 @@ public final class MioMenuActivity extends Activity {
             });
         mRoot.addView(windowRow);
 
+        // A short press on the volume up key opens this panel, a long press stays the Fn key
+        LinearLayout menuKeyRow = newRow();
+        addButton(menuKeyRow, "Ses açma tuşu menü: " + (MioTextStyle.isMioMenuOnVolumeUp(this) ? "AÇIK" : "kapalı"),
+            v -> {
+                boolean enabled = !MioTextStyle.isMioMenuOnVolumeUp(this);
+                MioTextStyle.setMioMenuOnVolumeUp(this, enabled);
+                toast(enabled
+                    ? "Ses açma tuşuna kısa basınca menü açılacak."
+                    : "Ses açma tuşu menüyü açmayacak.");
+                buildPanel();
+            });
+        mRoot.addView(menuKeyRow);
+
         // --------------------------------------------------------------------- sessions -----
         addSection("Oturumlar ve diğer");
 

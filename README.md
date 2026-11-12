@@ -138,8 +138,12 @@ mio yardim             # help
 - The animations are drawn by `MioParticleView` **between the background media and the terminal
   text**, the black background stays and the text stays readable. The chosen animation is stored in
   the app preferences and restored on the next start.
-- The menu is also reachable from the terminal long press menu (**Mio menu**, **Snow animation**,
-  **Particle animation**) and from the **Mio menu** button at the top of the session drawer.
+- The menu is also reachable with a **short press on the physical volume up key** (a long press
+  still acts as the Fn key, and the volume still changes if the volume keys are set to "volume"),
+  from the terminal long press menu (**Mio menu**, **Snow animation**, **Particle animation**) and
+  from the **Mio menu** button at the top of the session drawer. The key can be turned off with the
+  **Ses açma tuşu menü** toggle in the panel or with `mio-menu-on-volume-up=false` in
+  `~/.termux/termux.properties`.
 - The panel is a **separate activity** (`MioMenuActivity`), not a dialog: it is a scrollable column
   of sections like the side menu of ZeroTermux, it stays open while a button is pressed and it keeps
   its scroll position, so a short screen cannot hide the list. Every button rebuilds the labels.

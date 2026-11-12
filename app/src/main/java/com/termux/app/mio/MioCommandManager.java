@@ -807,7 +807,8 @@ public final class MioCommandManager {
     }
 
     private String getHelpString() {
-        return "mio             : Mio menüsünü aç (arka plan, animasyon, yazı, renk, tam ekran)\n" +
+        return "Mio menüsü      : ses açma tuşuna kısa bas (uzun basış Fn olarak kalır)\n" +
+            "mio             : Mio menüsünü aç (arka plan, animasyon, yazı, renk, tam ekran)\n" +
             "mio kay         : kar animasyonunu aç/kapat\n" +
             "mio parcacik    : parçacık animasyonunu aç/kapat\n" +
             "mio yazi +|-    : yazı boyutunu büyüt/küçült\n" +
