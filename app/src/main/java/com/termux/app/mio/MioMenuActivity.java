@@ -8,7 +8,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.text.TextUtils;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -27,7 +26,6 @@ import com.termux.app.TermuxActivity;
 import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.logger.Logger;
-import com.termux.terminal.TerminalSession;
 
 import java.io.File;
 
@@ -52,12 +50,16 @@ public final class MioMenuActivity extends Activity {
     /** The container the panel is (re)built into after an action changed a state. */
     private LinearLayout mRoot;
 
+    /** The scroll view of the panel, its position is kept when the panel is rebuilt. */
+    private ScrollView mScrollView;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Logger.logDebug(LOG_TAG, "onCreate");
 
         ScrollView scrollView = new ScrollView(this);
+        mScrollView = scrollView;
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(0xFF101418);
 
@@ -83,6 +85,9 @@ public final class MioMenuActivity extends Activity {
     /** Build (or rebuild) the panel content from the current state. */
     private void buildPanel() {
         if (mRoot == null) return;
+
+        // Keep the position of the list, so that a button press does not jump to the top
+        final int scrollY = mScrollView == null ? 0 : mScrollView.getScrollY();
         mRoot.removeAllViews();
 
         Context context = this;
@@ -157,16 +162,18 @@ public final class MioMenuActivity extends Activity {
 
         LinearLayout volumeRow = newRow();
         addButton(volumeRow, "Ses −", v -> {
-            MioAudioStream.getInstance(context).setVolumePercent(Math.max(0, pendingVolume[0] - 10));
             pendingVolume[0] = Math.max(0, pendingVolume[0] - 10);
+            MioAudioStream.getInstance(context).setVolumePercent(pendingVolume[0]);
             volumeSeekBar.setProgress(pendingVolume[0]);
-            buildPanel();
+            volumeLabel.setText("Medya sesi: " + pendingVolume[0] + "%");
+            toast("Medya sesi: " + pendingVolume[0] + "%");
         });
         addButton(volumeRow, "Ses +", v -> {
-            MioAudioStream.getInstance(context).setVolumePercent(Math.min(100, pendingVolume[0] + 10));
             pendingVolume[0] = Math.min(100, pendingVolume[0] + 10);
+            MioAudioStream.getInstance(context).setVolumePercent(pendingVolume[0]);
             volumeSeekBar.setProgress(pendingVolume[0]);
-            buildPanel();
+            volumeLabel.setText("Medya sesi: " + pendingVolume[0] + "%");
+            toast("Medya sesi: " + pendingVolume[0] + "%");
         });
         addButton(volumeRow, "Uygula", v -> {
             MioAudioStream.getInstance(context).setVolumePercent(volumeSeekBar.getProgress());
@@ -335,6 +342,10 @@ public final class MioMenuActivity extends Activity {
         LinearLayout closeRow = newRow();
         addButton(closeRow, "Kapat", v -> finish());
         mRoot.addView(closeRow);
+
+        if (scrollY > 0) {
+            mScrollView.post(() -> mScrollView.scrollTo(0, scrollY));
+        }
     }
 
     /* -------------------------------------------------------------------------------------- */

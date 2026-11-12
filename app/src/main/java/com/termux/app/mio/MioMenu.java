@@ -5,13 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.text.InputType;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,12 +18,9 @@ import androidx.annotation.Nullable;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.activities.HelpActivity;
-import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.logger.Logger;
-import com.termux.shared.termux.TermuxConstants;
 import com.termux.terminal.TerminalSession;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -244,77 +238,6 @@ public final class MioMenu {
     /* Font size                                                                                 */
     /* ---------------------------------------------------------------------------------------- */
 
-    /** Show a dialog with a slider and the buttons to change the font size. */
-    private static void showFontSizeDialog(@NonNull TermuxActivity activity) {
-        Context context = activity;
-        int minSize = 8;
-        int maxSize = 72;
-
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        int padding = (int) (20 * context.getResources().getDisplayMetrics().density);
-        layout.setPadding(padding, padding, padding, 0);
-
-        TextView valueView = new TextView(context);
-        valueView.setText(String.valueOf(MioTextStyle.getFontSize(context)));
-        valueView.setTextSize(20);
-        valueView.setGravity(android.view.Gravity.CENTER);
-
-        SeekBar seekBar = new SeekBar(context);
-        seekBar.setMax(maxSize - minSize);
-        seekBar.setProgress(Math.max(0, Math.min(maxSize - minSize, MioTextStyle.getFontSize(context) - minSize)));
-        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                valueView.setText(String.valueOf(minSize + progress));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar bar) {
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar bar) {
-            }
-        });
-
-        LinearLayout buttons = new LinearLayout(context);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        Button decreaseButton = new Button(context);
-        decreaseButton.setText("-");
-        decreaseButton.setOnClickListener(v -> {
-            int size = MioTextStyle.changeFontSize(context, -FONT_SIZE_STEP);
-            seekBar.setProgress(Math.max(0, Math.min(maxSize - minSize, size - minSize)));
-            valueView.setText(String.valueOf(size));
-        });
-        Button increaseButton = new Button(context);
-        increaseButton.setText("+");
-        increaseButton.setOnClickListener(v -> {
-            int size = MioTextStyle.changeFontSize(context, FONT_SIZE_STEP);
-            seekBar.setProgress(Math.max(0, Math.min(maxSize - minSize, size - minSize)));
-            valueView.setText(String.valueOf(size));
-        });
-        buttons.addView(decreaseButton, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        buttons.addView(increaseButton, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        layout.addView(seekBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        layout.addView(buttons, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        layout.addView(valueView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        new AlertDialog.Builder(activity)
-            .setTitle(R.string.mio_menu_font_size_title)
-            .setView(layout)
-            .setPositiveButton(R.string.mio_menu_apply, (dialog, which) -> {
-                int size = MioTextStyle.setFontSize(context, minSize + seekBar.getProgress());
-                if (size > 0) showToast(activity, "Yazı boyutu: " + size);
-            })
-            .setNeutralButton("Varsayılan", (dialog, which) -> {
-                int size = MioTextStyle.setFontSize(context, 0);
-                if (size > 0) showToast(activity, "Yazı boyutu varsayılana döndü: " + size);
-            })
-            .setNegativeButton(android.R.string.cancel, null)
-            .show();
-    }
 
     /* ---------------------------------------------------------------------------------------- */
     /* Colors                                                                                    */
