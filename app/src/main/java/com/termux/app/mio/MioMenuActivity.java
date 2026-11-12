@@ -873,8 +873,8 @@ public final class MioMenuActivity extends Activity {
                     toast("Proje adı boş olamaz.");
                     return;
                 }
-                name = name.replace("/", "_").replace(" ", "-");
-                final String path = HOME + "/projects/" + name;
+                final String projectName = name.replace("/", "_").replace(" ", "-");
+                final String path = HOME + "/projects/" + projectName;
                 final String typeName = type;
 
                 new Thread(() -> {
@@ -883,7 +883,7 @@ public final class MioMenuActivity extends Activity {
                     log.append(ok ? "Klasör: " + path + "\n" : "Klasör oluşturulamadı: " + path + "\n");
 
                     String fileName = "README.md";
-                    String content = "# " + name + "\n";
+                    String content = "# " + projectName + "\n";
                     if (typeName.equals("c")) {
                         fileName = "main.c";
                         content = "#include <stdio.h>\n\nint main(void) {\n    printf(\"Merhaba\\n\");\n    return 0;\n}\n";
