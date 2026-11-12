@@ -193,9 +193,18 @@ mio paket log Older-Pack   # show the log of the last run
   **Kur / Güncelle / Başlangıç / Günlük / Düzenle / Aç-Kapat / Klasör** for the selected package.
 - **Kod editörü** (`MioEditorActivity`) edits the scripts on the phone instead of `nano`: a monospace
   editor with the code key row (`Tab`, `{ }`, `( )`, `[ ]`, `< >`, `=`, `"`, `'`, `/`, `:`, `;`, `|`,
-  `$`, `#`, `_`, `&&`), **Kaydet**, **Çalıştır** (saves and runs the script with `sh` and shows the
-  output) and **Kapat** (asks before discarding changes). Reachable from **Paketler > Düzenle** and
-  from **Terminal araçları > Kod editörü**; it can also create a new file.
+  `$`, `#`, `_`, `&&`), **Kaydet**, **Çalıştır** and **Kapat** (asks before discarding changes).
+  Reachable from **Paketler > Düzenle** and from **Terminal araçları > Kod editörü**; it can also
+  create a new file.
+- The **Çalıştır** button picks the command from the file type, and its label says which one:
+  `.sh` is run with `sh`, a shell configuration file (`.bashrc`, `.profile`, ...) or **any file with
+  an `alias` line is sourced** (`. dosya`), `.py` runs with `python`/`python3`, `.js` with `node`,
+  `.php` with `php`, `.c`/`.cpp` is compiled with `cc` and then run, and `.java` is compiled with
+  `javac` and then run. Sourcing only affects the shell that is started for the run, so the output
+  says how to apply it to the terminal (`source ~/.bashrc`).
+- **Terminal ayarları > Alias'ları uygula** collects the `alias` lines of `~/.bashrc` in
+  `~/.mio/aliases` and adds one line to `~/.bashrc` that sources it, so the aliases are available in
+  every new session.
 
 ### ZeroTermux menu parity
 
@@ -212,10 +221,20 @@ and the entries are mirrored in the panel (Turkish labels):
 | Configure terminal | `Terminal ayarları` (Başlangıç dosyası, Karşılama mesajı, Komut tanımı, Alt klavye, Açılışta çalıştır, SHELL çalıştır) |
 | Online functions | `Çevrimiçi` (Wiki, forum, kaynak adresi) |
 | ZT functions | `ZT işlevleri` (FTP servisi, ADB kablosuz, SMS/Arama, Dizin aç, Kısayollar, Dil/tema) |
-| Packages/modules | `Paketler` (`.a.sh` / `.b.sh` / `.start-up.sh`, see above) |
+| Packages/modules | `Paketler` (`.a.sh` / `.b.sh` / `.start-up.sh`, see above), `Modül kur (ZIP)`, `VNC` |
+| VNC | `Paketler > VNC` (TigerVNC kur/başlat/durdur, bağlantı adresi) |
 
 ZeroTermux installs ZIP modules whose `INSTALL.txt` lines are `source -> target -> mode`, while this
 fork runs the scripts of a package instead, which can also fail, log and run a start-up script.
+
+### Modüller (ZeroTermux `INSTALL.txt` formatı)
+
+A ZIP module, the format of ZeroTermux, can be installed from **Paketler > Modül kur (ZIP)**: the ZIP
+is extracted to `~/.mio/tempmodule`, every non comment line of `INSTALL.txt` is
+`kaynak -> hedef -> izin` and the files are copied with that permission, then the temporary folder is
+removed. A module that writes outside of the temporary folder or that has a missing source fails the
+installation instead of being half installed. The ZIPs are picked from `~/.mio/modules` or from the
+file picker.
 
 ### How it works
 

@@ -396,6 +396,7 @@ public final class MioMenuActivity extends Activity {
         mRoot.addView(shellRow);
 
         LinearLayout shellRow2 = newRow();
+        addButton(shellRow2, "Alias'ları uygula", v -> applyAliases());
         addButton(shellRow2, "Alt klavye tuşları", v -> MioEditorActivity.startFromContext(this,
             "/data/data/com.termux/files/home/.termux/termux.properties"));
         addButton(shellRow2, "Açılışta çalıştır", v -> showBootCommandDialog());
@@ -443,6 +444,13 @@ public final class MioMenuActivity extends Activity {
         addButton(packageRow, "Örnek oluştur", v -> createTemplatePackage());
         addButton(packageRow, "Yenile", v -> buildPanel());
         mRoot.addView(packageRow);
+
+        LinearLayout moduleRow = newRow();
+        addButton(moduleRow, "Modül kur (ZIP)", v -> showModuleDialog());
+        addButton(moduleRow, "Modül klasörü", v -> runCommand(
+            "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"));
+        addButton(moduleRow, "VNC", v -> showVncDialog());
+        mRoot.addView(moduleRow);
 
         if (!packages.isEmpty()) {
             MioPackages.Package selected = getSelectedPackage(packages);
@@ -763,6 +771,139 @@ public final class MioMenuActivity extends Activity {
     }
 
     /* -------------------------------------------------------------------------------------- */
+    /* Modüller ve VNC (ZeroTermux)                                                           */
+    /* -------------------------------------------------------------------------------------- */
+
+    /**
+     * Install a ZeroTermux style module: a ZIP with an `INSTALL.txt` whose lines are
+     * `kaynak -> hedef -> izin`. The modules are picked from `~/.mio/modules` or from the gallery.
+     */
+    private void showModuleDialog() {
+        final java.util.List<File> modules = MioModuleInstaller.getModules();
+
+        if (modules.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setTitle("Modül kur")
+                .setMessage("~/.mio/modules klasörüne bir ZIP koy, içinde INSTALL.txt olsun.\n\n"
+                    + "Her satır: kaynak -> hedef -> izin\n"
+                    + "örnek: bin/foo -> /data/data/com.termux/files/usr/bin/foo -> 700")
+                .setPositiveButton("Galeriden seç", (dialog, which) -> pickModuleZip())
+                .setNeutralButton("Klasörü aç", (dialog, which) -> runCommand(
+                    "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+            return;
+        }
+
+        final String[] names = new String[modules.size()];
+        for (int i = 0; i < modules.size(); i++) names[i] = modules.get(i).getName();
+
+        new AlertDialog.Builder(this)
+            .setTitle("Modül kur — " + modules.size() + " modül")
+            .setItems(names, (dialog, which) -> installModule(modules.get(which)))
+            .setPositiveButton("Galeriden seç", (dialog, which) -> pickModuleZip())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private static final int PICK_MODULE_REQUEST_CODE = 1202;
+
+    private void pickModuleZip() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("application/zip");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(intent, "Modül ZIP seç"), PICK_MODULE_REQUEST_CODE);
+        } catch (Exception e) {
+            toast("Dosya seçici açılamadı: " + e);
+        }
+    }
+
+    /** Copy the picked ZIP to `~/.mio/modules` and install it. */
+    private void installPickedModule(@NonNull Uri uri) {
+        final File directory = new File(MioModuleInstaller.MODULE_DIR_PATH);
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            toast("Modül klasörü oluşturulamadı.");
+            return;
+        }
+
+        final String name = getDisplayName(uri);
+        final File target = new File(directory, name.endsWith(".zip") ? name : name + ".zip");
+        toast("Kopyalanıyor: " + target.getName());
+
+        new Thread(() -> {
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(target)) {
+                if (in != null) {
+                    byte[] buffer = new byte[65536];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to copy the module", e);
+            }
+
+            final boolean result = copied;
+            runOnUiThread(() -> {
+                if (result) {
+                    installModule(target);
+                } else {
+                    toast("Modül kopyalanamadı: " + target.getName());
+                }
+            });
+        }, "mio-module-copy").start();
+    }
+
+    /** Install the module in the background and show the log. */
+    private void installModule(@NonNull final File zipFile) {
+        toast("Modül kuruluyor: " + zipFile.getName());
+        new Thread(() -> {
+            final MioModuleInstaller.Result result = MioModuleInstaller.install(zipFile);
+            runOnUiThread(() -> new AlertDialog.Builder(this)
+                .setTitle(result.success ? "Modül kuruldu" : "Modül kurulamadı")
+                .setMessage(result.message)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> buildPanel())
+                .show());
+        }, "mio-module-install").start();
+    }
+
+    /** VNC: install and start a VNC server for the X11 desktop, like the VNC entry of ZeroTermux. */
+    private void showVncDialog() {
+        final String[] items = new String[]{
+            "TigerVNC kur (x11-repo)",
+            "VNC sunucusunu başlat (:1, 5901)",
+            "VNC sunucusunu durdur",
+            "Bağlantı adresi"
+        };
+        new AlertDialog.Builder(this)
+            .setTitle("VNC")
+            .setMessage("X11 masaüstünü telefondan veya bilgisayardan görüntülemek için.")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0:
+                        runCommand("pkg install -y x11-repo >/dev/null 2>&1; "
+                            + "pkg install -y tigervnc xfce4 >/dev/null 2>&1; echo 'TigerVNC kuruldu'");
+                        break;
+                    case 1:
+                        runCommand("pgrep -f Xvnc >/dev/null && echo 'VNC zaten çalışıyor' || "
+                            + "(vncserver :1 -geometry 1280x720 -depth 24 >/dev/null 2>&1 &); "
+                            + "sleep 2; echo 'VNC: 127.0.0.1:5901'");
+                        break;
+                    case 2:
+                        runCommand("vncserver -kill :1 2>/dev/null; echo 'VNC durduruldu'");
+                        break;
+                    default:
+                        runCommand("ip addr 2>/dev/null | grep 'inet ' | head -3; echo 'VNC portu: 5901'");
+                        break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
     /* Kod editörü                                                                            */
     /* -------------------------------------------------------------------------------------- */
 
@@ -1077,6 +1218,84 @@ public final class MioMenuActivity extends Activity {
     }
 
     /** Komut tanımı (alias) ekler ve ~/.bashrc'ye yazar. */
+    /**
+     * Apply the alias lines of `~/.bashrc` (and of the files that are sourced from it) to the
+     * commands of the fork: the lines are collected in `~/.mio/aliases`, a `mio-alias` command is
+     * installed to `$PREFIX/bin`, and `~/.bashrc` gets one line that sources the file, so that the
+     * aliases are available in every new session and in the code editor.
+     */
+    private void applyAliases() {
+        final File bashrc = new File(HOME, ".bashrc");
+        if (!bashrc.isFile()) {
+            toast("~/.bashrc yok. Önce Başlangıç dosyası oluştur.");
+            return;
+        }
+
+        final File aliasesFile = new File(HOME, ".mio/aliases");
+        final File parent = aliasesFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            toast("~/.mio klasörü oluşturulamadı.");
+            return;
+        }
+
+        new Thread(() -> {
+            StringBuilder collected = new StringBuilder();
+            int count = 0;
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(new java.io.FileInputStream(bashrc), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("alias ")) {
+                        collected.append(trimmed).append('\n');
+                        count++;
+                    }
+                }
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read ~/.bashrc", e);
+                runOnUiThread(() -> toast("~/.bashrc okunamadı: " + e));
+                return;
+            }
+
+            final int found = count;
+            if (count == 0) {
+                runOnUiThread(() -> toast("~/.bashrc içinde alias satırı yok."));
+                return;
+            }
+
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(aliasesFile)) {
+                out.write(("# mio alias listesi — " + new java.util.Date() + "\n" + collected).getBytes("UTF-8"));
+            } catch (Exception e) {
+                runOnUiThread(() -> toast("~/.mio/aliases yazılamadı: " + e));
+                return;
+            }
+
+            // The source line is added once, so that a new session sees the aliases
+            appendLineOnce(HOME + "/.bashrc", "# mio aliases", "[ -f ~/.mio/aliases ] && . ~/.mio/aliases");
+
+
+            runOnUiThread(() -> {
+                toast(found + " alias ~/.mio/aliases dosyasına yazıldı.");
+                new AlertDialog.Builder(this)
+                    .setTitle("Alias'lar")
+                    .setMessage(collected.toString().trim()
+                        + "\n\nTerminalde hemen kullanmak için:\nsource ~/.bashrc")
+                    .setPositiveButton("Yeni oturum", (dialog, which) -> {
+                        TermuxActivity activity = TermuxActivity.getInstance();
+                        if (activity == null) {
+                            toast("Termux ekranı açık değil.");
+                            return;
+                        }
+                        activity.getTermuxTerminalSessionClient().addNewSession(false, null);
+                        finish();
+                    })
+                    .setNeutralButton("Terminal", (dialog, which) -> finish())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            });
+        }, "mio-apply-aliases").start();
+    }
+
     private void showAliasDialog() {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -1476,6 +1695,8 @@ public final class MioMenuActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PICK_MEDIA_REQUEST_CODE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             copyAndSetMedia(data.getData());
+        } else if (requestCode == PICK_MODULE_REQUEST_CODE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installPickedModule(data.getData());
         }
     }
 

@@ -60,6 +60,7 @@ public final class MioEditorActivity extends Activity {
 
     private EditText mEditor;
     private TextView mTitle;
+    private Button mRunButton;
     private File mFile;
     private String mOpenedContent = "";
 
@@ -174,7 +175,7 @@ public final class MioEditorActivity extends Activity {
         actionRow.setOrientation(LinearLayout.HORIZONTAL);
         actionRow.setPadding(dp(8), 0, dp(8), dp(4));
         addAction(actionRow, "Kaydet", v -> save());
-        addAction(actionRow, "Çalıştır", v -> saveAndRun());
+        mRunButton = addAction(actionRow, getRunLabel(), v -> saveAndRun());
         addAction(actionRow, "Kapat", v -> onBackPressed());
         root.addView(actionRow, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -239,8 +240,9 @@ public final class MioEditorActivity extends Activity {
         return horizontalScrollView;
     }
 
-    private void addAction(@NonNull LinearLayout row, @NonNull String text,
-                           @NonNull View.OnClickListener listener) {
+    @NonNull
+    private Button addAction(@NonNull LinearLayout row, @NonNull String text,
+                             @NonNull View.OnClickListener listener) {
         Button button = new Button(this);
         button.setText(text);
         button.setTextSize(13);
@@ -250,6 +252,7 @@ public final class MioEditorActivity extends Activity {
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         params.setMargins(dp(2), 0, dp(2), 0);
         row.addView(button, params);
+        return button;
     }
 
     /* ---------------------------------------------------------------------------------------- */
@@ -269,6 +272,34 @@ public final class MioEditorActivity extends Activity {
         }
         mEditor.requestFocus();
         updateTitle();
+        updateRunLabel();
+    }
+
+    /**
+     * The label of the run button, which tells what the button does: a shell script is run, a file
+     * with `alias` lines (or a shell configuration file) is **sourced**, a source file is run with
+     * its interpreter, and a compiled file is built first.
+     */
+    @NonNull
+    private String getRunLabel() {
+        String name = mFile == null ? "" : mFile.getName();
+        String lowerCase = name.toLowerCase(Locale.ROOT);
+
+        if (lowerCase.endsWith(".py")) return "Çalıştır (python)";
+        if (lowerCase.endsWith(".js") || lowerCase.endsWith(".mjs")) return "Çalıştır (node)";
+        if (lowerCase.endsWith(".php")) return "Çalıştır (php)";
+        if (lowerCase.endsWith(".c") || lowerCase.endsWith(".cpp") || lowerCase.endsWith(".cc"))
+            return "Derle + çalıştır";
+        if (lowerCase.endsWith(".java")) return "Derle + çalıştır";
+        if (lowerCase.endsWith(".sh")) return "Çalıştır";
+        if (isShellConfigFile(lowerCase) || containsAlias()) return "source " + name;
+        return "Çalıştır";
+    }
+
+    /** Update the run button label after the text or the file changed. */
+    private void updateRunLabel() {
+        if (mRunButton == null) return;
+        mRunButton.setText(getRunLabel());
     }
 
     private boolean isChanged() {
@@ -308,6 +339,7 @@ public final class MioEditorActivity extends Activity {
         mEditor.setText(mOpenedContent);
         mEditor.setSelection(0);
         updateTitle();
+        updateRunLabel();
         if (problem != null) showMessage("Uyarı", problem);
     }
 
@@ -346,30 +378,105 @@ public final class MioEditorActivity extends Activity {
     /* Run                                                                                       */
     /* ---------------------------------------------------------------------------------------- */
 
-    /** Save the file and run it with `sh`, the output is shown in a dialog. */
+    /**
+     * Save the file and run it with the interpreter of its type, the output is shown in a dialog.
+     *
+     * A shell script is run with `sh`, a shell configuration file (`.bashrc`, `.profile`, ...) is
+     * **sourced** so that its `alias` lines take effect in the shell, and a source file is run with
+     * its interpreter (`python`, `python3`, `node`, `php`), a C/C++ file is compiled with `cc` and
+     * then run, and a Java file is compiled with `javac` and then run with `java`.
+     */
     private void saveAndRun() {
-        if (!mFile.getName().endsWith(".sh")) {
-            showMessage("Çalıştırılamaz", "Sadece .sh betikleri çalıştırılabilir.\nDosya: " + mFile.getName());
+        final String command = getRunCommand();
+        if (command == null) {
+            showMessage("Çalıştırılamaz",
+                "Bu dosya türü çalıştırılamıyor.\nDosya: " + mFile.getName()
+                    + "\n\nDesteklenen: .sh, .bashrc/.profile, .py, .js, .php, .c, .cpp, .java");
             return;
         }
         if (!save()) return;
 
         Toast.makeText(this, "Çalıştırılıyor: " + mFile.getName(), Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            final String output = runScript();
+            final String output = runShellCommand(command);
             runOnUiThread(() -> showOutput(output));
         }, "mio-editor-run").start();
     }
 
+    /**
+     * @return Returns the shell command that runs the file, or {@code null} if the type is not
+     * supported.
+     */
+    @Nullable
+    private String getRunCommand() {
+        String name = mFile.getName();
+        String lowerCase = name.toLowerCase(Locale.ROOT);
+        String path = MioPackages.quote(mFile.getAbsolutePath());
+
+        if (lowerCase.endsWith(".py")) {
+            return "command -v python >/dev/null 2>&1 && python " + path
+                + " || python3 " + path;
+        }
+        if (lowerCase.endsWith(".js") || lowerCase.endsWith(".mjs")) {
+            return "node " + path;
+        }
+        if (lowerCase.endsWith(".php")) {
+            return "php " + path;
+        }
+        if (lowerCase.endsWith(".c") || lowerCase.endsWith(".cpp") || lowerCase.endsWith(".cc")) {
+            String binary = "/data/data/com.termux/files/usr/tmp/mio-run-"
+                + Math.abs(name.hashCode());
+            return "cc -O0 -o " + binary + " " + path + " && " + binary
+                + "; status=$?; rm -f " + binary + "; exit $status";
+        }
+        if (lowerCase.endsWith(".java")) {
+            String className = name.substring(0, name.length() - ".java".length());
+            String directory = mFile.getParentFile() == null
+                ? "/data/data/com.termux/files/home" : mFile.getParentFile().getAbsolutePath();
+            return "cd " + MioPackages.quote(directory) + " && javac " + MioPackages.quote(name)
+                + " && java " + MioPackages.quote(className);
+        }
+        if (lowerCase.endsWith(".sh")) {
+            return "sh " + path;
+        }
+        if (isShellConfigFile(lowerCase) || containsAlias()) {
+            return ". " + path;
+        }
+        return null;
+    }
+
+    /** @return Returns {@code true} for `~/.bashrc`, `~/.profile` and the like. */
+    private static boolean isShellConfigFile(@NonNull String lowerCaseName) {
+        return lowerCaseName.endsWith(".bashrc") || lowerCaseName.endsWith(".zshrc")
+            || lowerCaseName.endsWith(".profile") || lowerCaseName.endsWith(".bash_profile")
+            || lowerCaseName.endsWith(".bash_aliases") || lowerCaseName.endsWith("bash.bashrc");
+    }
+
+    /** @return Returns {@code true} if the file contains an `alias` line. */
+    private boolean containsAlias() {
+        if (mEditor == null) return false;
+        String text = mEditor.getText().toString();
+        for (String line : text.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("alias ") || trimmed.startsWith("alias=")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Run the command with `sh -c` in the folder of the file, with the environment of the bootstrap,
+     * so that `python`, `node` and the other commands of the terminal are found.
+     */
     @NonNull
-    private String runScript() {
+    private String runShellCommand(@NonNull String command) {
         StringBuilder output = new StringBuilder();
         try {
-            List<String> command = new ArrayList<>();
-            command.add("/data/data/com.termux/files/usr/bin/sh");
-            command.add(mFile.getAbsolutePath());
+            List<String> commandLine = new ArrayList<>();
+            commandLine.add("/data/data/com.termux/files/usr/bin/sh");
+            commandLine.add("-c");
+            commandLine.add(command);
 
-            ProcessBuilder builder = new ProcessBuilder(command);
+            ProcessBuilder builder = new ProcessBuilder(commandLine);
             File directory = mFile.getParentFile();
             if (directory != null) builder.directory(directory);
             builder.redirectErrorStream(true);
@@ -381,6 +488,7 @@ public final class MioEditorActivity extends Activity {
                 + "/data/data/com.termux/files/usr/bin/applets:/system/bin:/system/xbin");
             builder.environment().put("LD_LIBRARY_PATH", "/data/data/com.termux/files/usr/lib");
             builder.environment().put("LANG", "en_US.UTF-8");
+            builder.environment().put("TERM", "xterm-256color");
 
             Process process = builder.start();
             try (BufferedReader reader = new BufferedReader(
@@ -411,6 +519,14 @@ public final class MioEditorActivity extends Activity {
 
     private void showOutput(@NonNull String output) {
         String text = output.trim().isEmpty() ? "(çıktı yok)" : output;
+
+        // A sourced file changes the shell it runs in, so say how to apply it in the terminal
+        String name = mFile == null ? "" : mFile.getName();
+        String lowerCase = name.toLowerCase(Locale.ROOT);
+        if (isShellConfigFile(lowerCase) || containsAlias()) {
+            text = text + "\n\nNot: alias'lar sadece çalıştırılan kabukta geçerliydi.\n"
+                + "Terminalde geçerli olması için: source ~/" + name;
+        }
         new AlertDialog.Builder(this)
             .setTitle(mFile.getName() + " — çıktı")
             .setMessage(text)
