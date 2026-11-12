@@ -397,6 +397,7 @@ public final class MioMenuActivity extends Activity {
 
         LinearLayout shellRow2 = newRow();
         addButton(shellRow2, "Alias'ları uygula", v -> applyAliases());
+        addButton(shellRow2, "Terminal menüsü", v -> showTerminalMenuEditor());
         addButton(shellRow2, "Alt klavye tuşları", v -> MioEditorActivity.startFromContext(this,
             "/data/data/com.termux/files/home/.termux/termux.properties"));
         addButton(shellRow2, "Açılışta çalıştır", v -> showBootCommandDialog());
@@ -424,8 +425,14 @@ public final class MioMenuActivity extends Activity {
         LinearLayout ztRow4 = newRow();
         addButton(ztRow4, "Dizin aç", v -> showOpenPathDialog());
         addButton(ztRow4, "Kısayollar", v -> showShortcutDialog());
-        addButton(ztRow4, "Dil / tema", v -> MioMenu.showColorMenuFor(this));
+        addButton(ztRow4, "MOE All-in-One", v -> showMoeDialog());
         mRoot.addView(ztRow4);
+
+        LinearLayout ztRow5 = newRow();
+        addButton(ztRow5, "Yüzen pencere", v -> showFloatingWindowDialog());
+        addButton(ztRow5, "Dil", v -> showLanguageDialog());
+        addButton(ztRow5, "Tema", v -> MioMenu.showColorMenuFor(this));
+        mRoot.addView(ztRow5);
 
         // ----------------------------------------------------------------------- packages -----
         addSection("Paketler");
@@ -1398,6 +1405,157 @@ public final class MioMenuActivity extends Activity {
         } catch (Exception e) {
             toast("Bağlantı açılamadı: " + url);
         }
+    }
+
+    /**
+     * MOE All-in-One: the all in one installer of the MOE community, which is run with the same
+     * command as the `MOE全能` entry of ZeroTermux (`CodeString.runMoeSh`).
+     */
+    private void showMoeDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("MOE All-in-One")
+            .setMessage("MOE, Termux içine hazır bir Linux ortamı kuran topluluk kurulumudur.\n\n"
+                + "Kurulum internetten indirilir ve uzun sürebilir. Devam edilsin mi?")
+            .setPositiveButton("Kur", (dialog, which) -> runCommand(
+                "pkg install -y curl; bash -c \"$(curl -L gitee.com/mo2/linux/raw/2/2)\""))
+            .setNeutralButton("Durum", (dialog, which) -> runCommand(
+                "command -v moe >/dev/null && echo 'MOE kurulu' || echo 'MOE kurulu değil'; "
+                    + "ls -d ~/moe ~/MOE 2>/dev/null"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /**
+     * Floating window: starts the floating window app of ZeroTermux, which is a separate plugin
+     * (`com.zero_float.action.ENTER`), and explains how to get it when it is not installed.
+     */
+    private void showFloatingWindowDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("Yüzen pencere")
+            .setMessage("Terminali küçük bir pencere olarak diğer uygulamaların üzerinde gösterir.\n\n"
+                + "ZeroTermux'un yüzen pencere eklentisi kurulu olmalı.")
+            .setPositiveButton("Başlat", (dialog, which) -> {
+                try {
+                    Intent intent = new Intent("com.zero_float.action.ENTER");
+                    startActivity(intent);
+                } catch (Exception e) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("Eklenti bulunamadı")
+                        .setMessage("Yüzen pencere eklentisi (zero_float) kurulu değil.\n\n"
+                            + "Alternatif: terminali bölünmüş ekranda kullanabilir veya "
+                            + "Android'in kendi serbest pencere modunu açabilirsin.\n\n"
+                            + "Hata: " + e.getClass().getSimpleName())
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show();
+                }
+            })
+            .setNeutralButton("Bölünmüş ekran", (dialog, which) -> showSplitScreenHint())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showSplitScreenHint() {
+        new AlertDialog.Builder(this)
+            .setTitle("Bölünmüş ekran")
+            .setMessage("Uygulama değiştiriciyi aç (son uygulamalar), Termux'un simgesine uzun bas "
+                + "ve \"Bölünmüş ekranda aç\" seç. Böylece terminal başka bir uygulamayla aynı ekranı "
+                + "paylaşır.")
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    /**
+     * Language: the panel is Turkish; this switches the X11/Termux messages between Turkish and
+     * English by setting `LANG` in `~/.mio/lang`, which is sourced from `~/.bashrc`.
+     */
+    private void showLanguageDialog() {
+        final String[] items = new String[]{
+            "Türkçe (tr_TR.UTF-8)",
+            "English (en_US.UTF-8)",
+            "Önceki ayarı göster",
+            "Sistem dillerini listele"
+        };
+
+        new AlertDialog.Builder(this)
+            .setTitle("Dil")
+            .setMessage("Komut satırı iletileri için dil ayarı (~/.mio/lang).")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                    case 0: setLanguage("tr_TR.UTF-8"); break;
+                    case 1: setLanguage("en_US.UTF-8"); break;
+                    case 2: runCommand("cat ~/.mio/lang 2>/dev/null || echo 'Dil ayarlanmadı'"); break;
+                    default: runCommand("locale -a 2>/dev/null | head -20"); break;
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /** Write the `LANG` of the passed locale to `~/.mio/lang` and source it from `~/.bashrc`. */
+    private void setLanguage(@NonNull String locale) {
+        final File langFile = new File(HOME, ".mio/lang");
+        final File parent = langFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            toast("~/.mio klasörü oluşturulamadı.");
+            return;
+        }
+
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(langFile)) {
+            out.write(("# mio dil ayarı\nexport LANG=" + locale + "\n"
+                + "export LC_ALL=" + locale + "\n").getBytes("UTF-8"));
+        } catch (Exception e) {
+            toast("Dil ayarı yazılamadı: " + e);
+            return;
+        }
+
+        appendLineOnce(HOME + "/.bashrc", "# mio lang", "[ -f ~/.mio/lang ] && . ~/.mio/lang");
+        toast("Dil: " + locale + " (yeni oturumda geçerli)");
+    }
+
+    /** `~/.mio/menu.d` klasörünü açar; menü dosyaları `etiket|komut` satırlarından oluşur. */
+    private void showTerminalMenuEditor() {
+        final File menuDir = new File(HOME, ".mio/menu.d");
+        if (!menuDir.isDirectory() && !menuDir.mkdirs()) {
+            toast("~/.mio/menu.d oluşturulamadı.");
+            return;
+        }
+
+        final File[] files = menuDir.listFiles((dir, name) -> name.endsWith(".menu"));
+        final java.util.List<File> menuFiles = new java.util.ArrayList<>();
+        if (files != null) {
+            for (File file : files) menuFiles.add(file);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Terminal menüsü")
+            .setMessage("Terminalde `mio menu` yazarak açılır.\n"
+                + "Her satır: etiket|komut\n"
+                + "örnek: Yedek al|tar -czf ~/yedek.tar.gz ~/projects\n\n"
+                + "Klasör: " + menuDir.getAbsolutePath() + "\n"
+                + "Dosya: " + menuFiles.size())
+            .setPositiveButton("Düzenle", (dialog, which) -> {
+                if (menuFiles.isEmpty()) {
+                    MioEditorActivity.startFromContext(this,
+                        new File(menuDir, "varsayilan.menu").getAbsolutePath());
+                } else {
+                    final String[] names = new String[menuFiles.size()];
+                    for (int i = 0; i < menuFiles.size(); i++) names[i] = menuFiles.get(i).getName();
+                    new AlertDialog.Builder(this)
+                        .setTitle("Menü dosyası")
+                        .setItems(names, (d, which) -> MioEditorActivity.startFromContext(this,
+                            menuFiles.get(which).getAbsolutePath()))
+                        .setNeutralButton("Yeni dosya", (d, w) -> MioEditorActivity.startFromContext(
+                            this, new File(menuDir, "ozel.menu").getAbsolutePath()))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+                }
+            })
+            .setNeutralButton("Varsayılanı oluştur", (dialog, which) -> runCommand(
+                "mkdir -p ~/.mio/menu.d && [ -f ~/.mio/menu.d/varsayilan.menu ] || "
+                    + "printf '# etiket|komut\nKar animasyonu|mio kar\nPaketler|mio paket\n' "
+                    + "> ~/.mio/menu.d/varsayilan.menu; ls -l ~/.mio/menu.d"))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     private void showFtpDialog() {

@@ -223,9 +223,20 @@ and the entries are mirrored in the panel (Turkish labels):
 | ZT functions | `ZT işlevleri` (FTP servisi, ADB kablosuz, SMS/Arama, Dizin aç, Kısayollar, Dil/tema) |
 | Packages/modules | `Paketler` (`.a.sh` / `.b.sh` / `.start-up.sh`, see above), `Modül kur (ZIP)`, `VNC` |
 | VNC | `Paketler > VNC` (TigerVNC kur/başlat/durdur, bağlantı adresi) |
+| MOE All-in-One | `ZT işlevleri > MOE All-in-One` (aynı `runMoeSh` komutu) |
+| Floating window | `ZT işlevleri > Yüzen pencere` (ZeroTermux eklentisi `com.zero_float.action.ENTER`) |
+| Language switch | `ZT işlevleri > Dil` (`~/.mio/lang`, `LANG`/`LC_ALL`) |
 
 ZeroTermux installs ZIP modules whose `INSTALL.txt` lines are `source -> target -> mode`, while this
 fork runs the scripts of a package instead, which can also fail, log and run a start-up script.
+
+### Terminal menüsü (`mio menu`)
+
+`mio menu` shows a numbered menu in the terminal that runs the selected command. The entries are read
+from `~/.mio/menu.d/*.menu`, one `label|command` per line (`#` lines are comments), so the menu can be
+extended without a new app version. `mio menu liste` lists the files and `mio menu sifirla`
+regenerates the default menu; the files can be edited from **Terminal ayarları > Terminal menüsü**
+with the code editor. `mio gui` (or `mio panel`) still opens the panel window.
 
 ### Modüller (ZeroTermux `INSTALL.txt` formatı)
 
