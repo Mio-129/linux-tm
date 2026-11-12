@@ -56,6 +56,11 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
 
     private final ImageView mImageView;
     private final TextureView mTextureView;
+    /**
+     * The animated overlay (snow or particles) that is drawn above the media and below the
+     * terminal text, like the "snow" and "particles" effects of ZeroTermux.
+     */
+    private final MioParticleView mParticleView;
 
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
@@ -76,6 +81,14 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
     /** If the audio of the currently shown video is enabled by the `so` command. */
     private boolean mAudioEnabled;
 
+    /**
+     * The reason the audio of the current video may not be audible, like a video without an audio
+     * track that has no audio file with the same name next to it. {@code null} while unknown or
+     * while the audio should work.
+     */
+    @Nullable
+    private String mAudioProblem;
+
     /** The pending play request which is run when the {@link #mSurface} becomes available. */
     @Nullable
     private Runnable mPendingPlayRunnable;
@@ -92,13 +105,17 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
     @Nullable
     private MediaStateListener mMediaStateListener;
 
-    /** Listener to be notified when a background media is set or cleared. */
+    /**
+     * Listener to be notified when the background of the terminal changes, either because a media
+     * was set or cleared with the `swset` command, or because an animation was enabled or disabled.
+     */
     public interface MediaStateListener {
         /**
-         * @param hasMedia {@code true} if a background media is set, in which case the terminal
-         * should be rendered transparently on top of it, {@code false} if the background is clear.
+         * @param hasBackground {@code true} if the terminal must be rendered transparently so that
+         * the media and/or the animation behind it is visible, {@code false} if the terminal
+         * should paint its own (black) background.
          */
-        void onMediaStateChanged(boolean hasMedia);
+        void onMediaStateChanged(boolean hasBackground);
     }
 
     public MioMediaBackgroundView(@NonNull Context context) {
@@ -129,6 +146,12 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
         mTextureView.setId(R.id.mio_media_texture_view);
         addView(mTextureView, 0, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
+        // The animation is added at the end since the xml children (like the terminal view) are
+        // added after this constructor, so the animation ends up above the media and below them
+        mParticleView = new MioParticleView(context);
+        mParticleView.setId(R.id.mio_particle_view);
+        addView(mParticleView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
         setInstance();
     }
 
@@ -142,11 +165,41 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
      */
     public void setMediaStateListener(@Nullable MediaStateListener listener) {
         mMediaStateListener = listener;
-        if (listener != null) listener.onMediaStateChanged(hasMedia());
+        if (listener != null) listener.onMediaStateChanged(hasVisualBackground());
     }
 
     private void notifyMediaStateChanged() {
-        if (mMediaStateListener != null) mMediaStateListener.onMediaStateChanged(hasMedia());
+        if (mMediaStateListener != null) mMediaStateListener.onMediaStateChanged(hasVisualBackground());
+    }
+
+    /**
+     * @return Returns {@code true} if the terminal must be rendered transparently, which is the
+     * case if a media is set or an animation is enabled behind it.
+     */
+    public boolean hasVisualBackground() {
+        return hasMedia() || mParticleView.getMode() != MioParticleView.Mode.NONE;
+    }
+
+    /** @return Returns the animation view that is drawn above the media and below the terminal. */
+    @NonNull
+    public MioParticleView getParticleView() {
+        return mParticleView;
+    }
+
+    /**
+     * Set the animation that is drawn behind the terminal text.
+     *
+     * @param mode The animation, {@link MioParticleView.Mode#NONE} disables it.
+     */
+    public void setAnimationMode(@NonNull MioParticleView.Mode mode) {
+        mParticleView.setMode(mode);
+        notifyMediaStateChanged();
+    }
+
+    /** @return Returns the currently drawn animation. */
+    @NonNull
+    public MioParticleView.Mode getAnimationMode() {
+        return mParticleView.getMode();
     }
 
     void setInstance() {
@@ -223,6 +276,7 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
             mMediaFile = file;
             mIsVideo = false;
             mAudioEnabled = false;
+            mAudioProblem = null;
             releaseAudioPlayer();
             updateImageMatrix();
             notifyMediaStateChanged();
@@ -248,6 +302,7 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
         mMediaFile = file;
         mIsVideo = true;
         mAudioEnabled = playAudio;
+        mAudioProblem = null;
         mTextureView.setVisibility(VISIBLE);
 
         notifyMediaStateChanged();
@@ -293,7 +348,9 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
             }
 
             if (enabled) {
-                startSeparateAudioFileIfNeeded(mMediaFile, mMediaPlayer);
+                if (mMediaPlayer != null && !hasAudioTrack(mMediaPlayer) && mAudioPlayer == null) {
+                    startSeparateAudioFileIfNeeded(mMediaFile, mMediaPlayer);
+                }
             } else {
                 releaseAudioPlayer();
             }
@@ -312,6 +369,15 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
      */
     public boolean isAudioEnabled() {
         return mIsVideo && mAudioEnabled;
+    }
+
+    /**
+     * @return Returns the reason the audio of the current video may not be audible, like
+     * "videoda ses yok, yanına aynı isimli bir .mp3/.m4a koy", or {@code null} if it should work.
+     */
+    @Nullable
+    public String getAudioProblem() {
+        return mAudioProblem;
     }
 
     public boolean isVideo() {
@@ -475,16 +541,22 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
      * audio while the video keeps playing silently.
      */
     private void startSeparateAudioFileIfNeeded(@Nullable File videoFile, @NonNull MediaPlayer mediaPlayer) {
-        if (videoFile == null || !mAudioEnabled || mAudioPlayer != null) return;
-        if (hasAudioTrack(mediaPlayer)) return;
+        if (videoFile == null) return;
+        if (hasAudioTrack(mediaPlayer)) {
+            mAudioProblem = null;
+            return;
+        }
+        if (!mAudioEnabled || mAudioPlayer != null) return;
 
         File audioFile = MioMediaFiles.findSiblingAudioFile(videoFile);
         if (audioFile == null) {
             Logger.logWarn(LOG_TAG, "Video file has no audio track and no sibling audio file found for \"" + videoFile.getAbsolutePath() + "\"");
+            mAudioProblem = "videoda ses yok, yanına aynı isimli bir .mp3/.m4a koy";
             return;
         }
 
         Logger.logInfo(LOG_TAG, "Video file has no audio track, playing audio from sibling file \"" + audioFile.getAbsolutePath() + "\"");
+        mAudioProblem = null;
         try {
             MediaPlayer audioPlayer = new MediaPlayer();
             audioPlayer.setLooping(true);

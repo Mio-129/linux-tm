@@ -40,7 +40,23 @@ jobs:
         run: |
           set -e
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log
+          exit "${PIPESTATUS[0]}"
+
+      # Surface the compile errors as annotations since the job logs are not always downloadable
+      - name: Report compile errors as annotations
+        if: failure()
+        shell: bash {0}
+        run: |
+          # The "What went wrong" section has the actual reason, print it as annotations
+          awk '/What went wrong/{flag=1} flag' /tmp/gradle.log 2>/dev/null | head -40 | \
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          grep -E "error:|e: |Caused by|OutOfMemory|Execution failed" /tmp/gradle.log 2>/dev/null | head -30 | \
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done
 
       - name: Show APK files
         if: always()

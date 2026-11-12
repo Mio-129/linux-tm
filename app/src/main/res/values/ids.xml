@@ -3,4 +3,6 @@
     <!-- Ids of the child views of MioMediaBackgroundView that are created in code -->
     <item name="mio_media_image_view" type="id" />
     <item name="mio_media_texture_view" type="id" />
+    <!-- The animated overlay (snow/particles) above the media and below the terminal text -->
+    <item name="mio_particle_view" type="id" />
 </resources>

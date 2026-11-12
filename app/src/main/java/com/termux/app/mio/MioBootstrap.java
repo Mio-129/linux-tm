@@ -19,8 +19,8 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Installs the `swset` and `so` command scripts of this fork to `$PREFIX/bin`, so that they can be
- * run from the terminal like any other command.
+ * Installs the `swset`, `so` and `mio` command scripts of this fork to `$PREFIX/bin`, so that they
+ * can be run from the terminal like any other command.
  *
  * The scripts are stored in the assets of the app at `assets/mio/` and are copied the first time
  * the app is run, and again after an app update (the app version name is written to
@@ -31,12 +31,21 @@ public final class MioBootstrap {
     public static final String LOG_TAG = "MioBootstrap";
 
     /** The name of the commands installed to `$PREFIX/bin`. */
-    public static final List<String> COMMANDS = Arrays.asList("swset", "so");
+    public static final List<String> COMMANDS = Arrays.asList("swset", "so", "mio");
 
     private static final String ASSET_DIR = "mio";
     private static final String VERSION_FILE_PATH = TermuxConstants.TERMUX_FILES_DIR_PATH + "/.mio-commands-version";
 
     private MioBootstrap() {
+    }
+
+    /**
+     * Also called when the app is already running, so that the commands are installed right after
+     * an update without the user having to restart the app.
+     */
+    public static synchronized void ensureInstalled(@Nullable Context context) {
+        if (context == null) return;
+        install(context);
     }
 
     /**
@@ -54,7 +63,7 @@ public final class MioBootstrap {
         }
 
         String installedVersion = readVersionFile();
-        String currentVersion = getCurrentVersion();
+        String currentVersion = getCurrentVersion(context);
         boolean forceInstall = installedVersion == null || !installedVersion.equals(currentVersion) ||
             !areCommandsInstalled(binDir) || !areCommandsUpToDate(context, binDir);
 
@@ -157,8 +166,26 @@ public final class MioBootstrap {
         }
     }
 
+    /**
+     * The version is the app version combined with the total length of the command scripts, so that
+     * the commands are also reinstalled when a script changes without a version bump, like during
+     * development, and so that a broken or truncated installed script is always replaced.
+     */
     @NonNull
-    private static String getCurrentVersion() {
-        return BuildConfig.VERSION_NAME + "-" + BuildConfig.VERSION_CODE;
+    private static String getCurrentVersion(@Nullable Context context) {
+        StringBuilder version = new StringBuilder(BuildConfig.VERSION_NAME)
+            .append('-').append(BuildConfig.VERSION_CODE);
+
+        if (context != null) {
+            for (String command : COMMANDS) {
+                try (InputStream asset = context.getAssets().open(ASSET_DIR + "/" + command)) {
+                    version.append('-').append(asset.available());
+                } catch (IOException e) {
+                    version.append("-0");
+                }
+            }
+        }
+
+        return version.toString();
     }
 }

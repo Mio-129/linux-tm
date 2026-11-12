@@ -30,6 +30,8 @@ import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.mio.MioCommandManager;
 import com.termux.app.mio.MioMediaBackgroundView;
+import com.termux.app.mio.MioMenu;
+import com.termux.app.mio.MioParticleView;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
@@ -196,16 +198,36 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
     private static final int CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID = 12;
+    private static final int CONTEXT_MENU_MIO_MENU_ID = 13;
+    private static final int CONTEXT_MENU_MIO_SNOW_ID = 14;
+    private static final int CONTEXT_MENU_MIO_PARTICLES_ID = 15;
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
     private static final String LOG_TAG = "TermuxActivity";
 
+    /**
+     * The currently created activity, used by the `mio` commands to apply the font size and colors
+     * to the visible terminal. Cleared when the activity is destroyed so that no activity is leaked.
+     */
+    @Nullable
+    private static TermuxActivity sInstance;
+
+    /**
+     * @return Returns the currently created {@link TermuxActivity}, or {@code null} if it does not
+     * exist, like when the app is in the background.
+     */
+    @Nullable
+    public static TermuxActivity getInstance() {
+        return sInstance;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         Logger.logDebug(LOG_TAG, "onCreate");
         mIsOnResumeAfterOnCreate = true;
+        sInstance = this;
 
         if (savedInstanceState != null)
             mIsActivityRecreated = savedInstanceState.getBoolean(ARG_ACTIVITY_RECREATED, false);
@@ -257,6 +279,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTerminalToolbarView(savedInstanceState);
 
         setSettingsButtonView();
+
+        setMioMenuButtonView();
+
+        setMioMenuLongPressViews();
 
         setNewSessionButtonView();
 
@@ -377,6 +403,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     @Override
     public void onDestroy() {
+        if (sInstance == this) sInstance = null;
+
         super.onDestroy();
 
         Logger.logDebug(LOG_TAG, "onDestroy");
@@ -536,9 +564,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void setMioMediaBackgroundView() {
         if (mMioMediaBackgroundView == null || mTerminalView == null) return;
 
-        mMioMediaBackgroundView.setMediaStateListener(hasMedia -> {
-            mTerminalView.setBackgroundTransparent(hasMedia);
-            mTerminalView.setBackgroundColor(hasMedia ? android.graphics.Color.TRANSPARENT : android.graphics.Color.BLACK);
+        mMioMediaBackgroundView.setMediaStateListener(hasVisualBackground -> {
+            mTerminalView.setBackgroundTransparent(hasVisualBackground);
+            mTerminalView.setBackgroundColor(hasVisualBackground ? android.graphics.Color.TRANSPARENT : android.graphics.Color.BLACK);
         });
 
         // Apply the media that was set before the activity was created or recreated, like after a
@@ -619,6 +647,35 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
     }
 
+    /**
+     * Also open the Mio menu with a long press on the session drawer header (the settings button row)
+     * and on the settings button itself, so that the menu is always one gesture away when the
+     * terminal long press or the drawer button cannot be used.
+     */
+    private void setMioMenuLongPressViews() {
+        View settingsButton = findViewById(R.id.settings_button);
+        if (settingsButton != null) settingsButton.setOnLongClickListener(v -> {
+            getDrawer().closeDrawers();
+            MioMenu.show(this);
+            return true;
+        });
+    }
+
+    /** Wire the button in the drawer that opens the Mio menu of this fork. */
+    private void setMioMenuButtonView() {
+        View mioMenuButton = findViewById(R.id.mio_menu_button);
+        if (mioMenuButton == null) return;
+        mioMenuButton.setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            MioMenu.show(this);
+        });
+        mioMenuButton.setOnLongClickListener(v -> {
+            getDrawer().closeDrawers();
+            showMioBackgroundMediaDialog();
+            return true;
+        });
+    }
+
     private void setNewSessionButtonView() {
         View newSessionButton = findViewById(R.id.new_session_button);
         newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
@@ -638,6 +695,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
 
         findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
+            if (com.termux.app.mio.MioTextStyle.isMioMenuOnKeyboardLongPress(this)) {
+                MioMenu.show(this);
+                getDrawer().closeDrawers();
+                return true;
+            }
             toggleTerminalToolbar();
             return true;
         });
@@ -697,7 +759,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
         menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
+        MioMediaBackgroundView backgroundView = mMioMediaBackgroundView;
+        MioParticleView.Mode animationMode = backgroundView == null ?
+            MioParticleView.Mode.NONE : backgroundView.getAnimationMode();
         menu.add(Menu.NONE, CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID, Menu.NONE, R.string.action_mio_background_media);
+        menu.add(Menu.NONE, CONTEXT_MENU_MIO_MENU_ID, Menu.NONE, R.string.action_mio_menu);
+        menu.add(Menu.NONE, CONTEXT_MENU_MIO_SNOW_ID, Menu.NONE, R.string.action_mio_snow).setCheckable(true)
+            .setChecked(animationMode == MioParticleView.Mode.SNOW);
+        menu.add(Menu.NONE, CONTEXT_MENU_MIO_PARTICLES_ID, Menu.NONE, R.string.action_mio_particles).setCheckable(true)
+            .setChecked(animationMode == MioParticleView.Mode.PARTICLES);
     }
 
     /** Hook system menu to show context menu instead. */
@@ -751,6 +821,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_MIO_BACKGROUND_MEDIA_ID:
                 showMioBackgroundMediaDialog();
                 return true;
+            case CONTEXT_MENU_MIO_MENU_ID:
+                MioMenu.show(this);
+                return true;
+            case CONTEXT_MENU_MIO_SNOW_ID:
+                MioMenu.toggleSnow(this);
+                return true;
+            case CONTEXT_MENU_MIO_PARTICLES_ID:
+                MioMenu.toggleParticles(this);
+                return true;
             default:
                 return super.onContextItemSelected(item);
         }
@@ -789,15 +868,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     /** Show the dialog with the info and actions of the `swset` and `so` commands of this fork. */
     private void showMioBackgroundMediaDialog() {
-        new AlertDialog.Builder(this)
-            .setTitle(R.string.mio_background_media_dialog_title)
-            .setMessage(R.string.mio_background_media_dialog_message)
-            .setPositiveButton(R.string.mio_background_media_dialog_clear, (dialog, which) -> {
-                dialog.dismiss();
-                MioCommandManager.getInstance(this).clearWallpaper();
-            })
-            .setNegativeButton(android.R.string.cancel, null)
-            .show();
+        MioMenu.showBackgroundMediaMenu(this);
     }
 
     private void showStylingDialog() {
@@ -861,6 +932,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onActivityResult: requestCode: " + requestCode + ", resultCode: "  + resultCode + ", data: "  + IntentUtils.getIntentString(data));
         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
             requestStoragePermission(true);
+        } else if (requestCode == MioMenu.PICK_MEDIA_REQUEST_CODE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                MioMenu.handlePickedMediaFile(this, data.getData());
+            }
         }
     }
 
@@ -1055,6 +1130,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setMargins();
         setTerminalToolbarHeight();
+
+        // Apply the font size that may have been changed by the `mio yazi` command or the Mio menu
+        if (mTerminalView != null && mPreferences != null)
+            mTerminalView.setTextSize(mPreferences.getFontSize());
 
         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
 
