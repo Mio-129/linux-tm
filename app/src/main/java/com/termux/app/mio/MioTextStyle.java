@@ -195,6 +195,21 @@ public final class MioTextStyle {
         }
     }
 
+    /** Read the `~/.termux/termux.properties` file, an empty set of properties is returned if it does not exist. */
+    @NonNull
+    private static Properties readTermuxProperties() {
+        Properties properties = new Properties();
+        File propertiesFile = getPropertiesFile();
+        if (!propertiesFile.isFile()) return properties;
+
+        try (InputStream in = new FileInputStream(propertiesFile)) {
+            properties.load(in);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read \"" + propertiesFile.getAbsolutePath() + "\"", e);
+        }
+        return properties;
+    }
+
     @NonNull
     private static Properties readColors() {
         Properties properties = new Properties();
@@ -229,7 +244,7 @@ public final class MioTextStyle {
     /** @return Returns the value of the property in `~/.termux/termux.properties`, or {@code null}. */
     @Nullable
     public static String getProperty(@NonNull String key) {
-        Properties properties = readProperties();
+        Properties properties = readTermuxProperties();
         String value = properties.getProperty(key);
         if (value == null || value.trim().isEmpty()) return null;
         return value.trim();
