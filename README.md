@@ -161,6 +161,37 @@ mio yardim             # help
   the fullscreen flag in `~/.termux/termux.properties`, so Termux:Styling and the settings activity
   keep working as usual.
 
+### Paketler - packages with `.a.sh`, `.b.sh` and `.start-up.sh`
+
+The **Paketler** (packages) section of the Mio menu installs small script packages, in the spirit of
+the package tiers of ZeroTermux. A package is a folder below `~/.mio/pkgs/<paket>`:
+
+| File | Meaning |
+| --- | --- |
+| `<paket>.a.sh` | the first script, **Older-Pack** - the installation itself |
+| `<paket>.b.sh` | the second script, **Older-Tool** - only run after `.a.sh` succeeded |
+| `<paket>.c.sh`, ... | further steps, run in letter order |
+| `<paket>.start-up.sh` | **start-up** - run on every app start and after an update |
+| `VERSION` | the version of the package, a changed version means an update |
+
+```sh
+mio paket                  # list the packages and their state
+mio paket kur Older-Pack   # run .a.sh, then .b.sh, mark the package installed
+mio paket guncelle         # install every package with a new VERSION
+mio paket baslat           # run the .start-up.sh scripts of the installed packages
+mio paket sifirla          # create the example Older-Pack package
+mio paket log Older-Pack   # show the log of the last run
+```
+
+- A failing `.a.sh` stops the run: `.b.sh` is **not** executed and the package is not marked as
+  installed, so a broken first stage never looks like a successful install.
+- The state lives in `~/.mio/state/` (`<paket>.installed`, `<paket>.disabled`) and the output of the
+  last run in `~/.mio/log/<paket>.log`, so both the panel and the shell commands see the same state.
+- The `*.start-up.sh` scripts of the enabled packages are run once per app start, in the background,
+  only after the package was installed without a pending update.
+- The menu has the same actions: **Paket güncelle (N)**, **Örnek oluştur**, a package selector, and
+  **Kur / Güncelle / Başlangıç / Günlük / Aç-Kapat / Klasör** for the selected package.
+
 ### How it works
 
 - The commands are POSIX shell scripts in `app/src/main/assets/mio/`, they are copied to

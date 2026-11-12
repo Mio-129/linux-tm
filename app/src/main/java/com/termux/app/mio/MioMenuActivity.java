@@ -28,6 +28,7 @@ import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.logger.Logger;
 
 import java.io.File;
+import java.util.List;
 
 /**
  * The "Mio menü" of this fork, shown as its own activity instead of a dialog.
@@ -52,6 +53,9 @@ public final class MioMenuActivity extends Activity {
 
     /** The scroll view of the panel, its position is kept when the panel is rebuilt. */
     private ScrollView mScrollView;
+
+    /** The name of the package that is selected in the "Paketler" section. */
+    private String mSelectedPackage;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -366,6 +370,59 @@ public final class MioMenuActivity extends Activity {
         addButton(ztRow2, "Beautify sıfırla", v -> confirmResetBeautify());
         mRoot.addView(ztRow2);
 
+        // ----------------------------------------------------------------------- packages -----
+        addSection("Paketler");
+
+        List<MioPackages.Package> packages = MioPackages.getPackages();
+        List<MioPackages.Package> updatable = MioPackages.getUpdatablePackages();
+
+        addText(packages.isEmpty()
+            ? "Paket yok. ~/.mio/pkgs/<paket> klasörüne .a.sh, .b.sh ve .start-up.sh betiklerini koy."
+            : packages.size() + " paket • " + (updatable.isEmpty()
+                ? "hepsi güncel" : updatable.size() + " paket güncellenebilir"));
+
+        LinearLayout packageRow = newRow();
+        addButton(packageRow, "Paket " + (updatable.isEmpty() ? "güncelle" : "güncelle (" + updatable.size() + ")"),
+            v -> updateAllPackages());
+        addButton(packageRow, "Örnek oluştur", v -> createTemplatePackage());
+        addButton(packageRow, "Yenile", v -> buildPanel());
+        mRoot.addView(packageRow);
+
+        if (!packages.isEmpty()) {
+            MioPackages.Package selected = getSelectedPackage(packages);
+            addText("Seçili paket: " + (selected == null ? "yok" : selected.getSummary()));
+
+            LinearLayout packageSelectRow = newRow();
+            for (MioPackages.Package pkg : packages) {
+                boolean isSelected = selected != null && selected.name.equals(pkg.name);
+                addButton(packageSelectRow, (isSelected ? "• " : "") + pkg.name, v -> selectPackage(pkg.name));
+                if (packageSelectRow.getChildCount() >= 3) {
+                    mRoot.addView(packageSelectRow);
+                    packageSelectRow = newRow();
+                }
+            }
+            if (packageSelectRow.getChildCount() > 0) mRoot.addView(packageSelectRow);
+
+            if (selected != null) {
+                LinearLayout packageActionRow = newRow();
+                addButton(packageActionRow, selected.isInstalled() ? "Yeniden kur" : "Kur",
+                    v -> runPackage(selected, false));
+                addButton(packageActionRow, "Güncelle", v -> runPackage(selected, true));
+                addButton(packageActionRow, "Başlangıç", v -> runPackageStartUp(selected));
+                mRoot.addView(packageActionRow);
+
+                LinearLayout packageActionRow2 = newRow();
+                addButton(packageActionRow2, "Günlük", v -> showPackageLog(selected));
+                addButton(packageActionRow2, selected.isEnabled() ? "Kapat" : "Aç",
+                    v -> togglePackage(selected));
+                addButton(packageActionRow2, "Klasör", v -> showPackageFolder(selected));
+                mRoot.addView(packageActionRow2);
+
+                String logTail = selected.getLogTail(3);
+                if (!logTail.isEmpty()) addText("Son çalıştırma:\n" + logTail);
+            }
+        }
+
         // ------------------------------------------------------------------------ close -----
         LinearLayout closeRow = newRow();
         addButton(closeRow, "Kapat", v -> finish());
@@ -555,6 +612,107 @@ public final class MioMenuActivity extends Activity {
                 buildPanel();
             })
             .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Paketler                                                                               */
+    /* -------------------------------------------------------------------------------------- */
+
+    /** The selected package, the first one if the selected one does not exist anymore. */
+    @Nullable
+    private MioPackages.Package getSelectedPackage(@NonNull List<MioPackages.Package> packages) {
+        if (packages.isEmpty()) return null;
+        if (mSelectedPackage != null) {
+            for (MioPackages.Package pkg : packages) {
+                if (pkg.name.equals(mSelectedPackage)) return pkg;
+            }
+        }
+        return packages.get(0);
+    }
+
+    private void selectPackage(@NonNull String name) {
+        mSelectedPackage = name;
+        buildPanel();
+    }
+
+    /** Install a package (or update it), then show the result. */
+    private void runPackage(@NonNull MioPackages.Package pkg, boolean update) {
+        toast((update ? "Güncelleniyor: " : "Kuruluyor: ") + pkg.name);
+        final MioPackageRunner.Result[] result = new MioPackageRunner.Result[1];
+        // The scripts can take a while, so they are run outside of the UI thread
+        new Thread(() -> {
+            result[0] = MioPackageRunner.install(pkg);
+            runOnUiThread(() -> {
+                toast(result[0].message);
+                if (!result[0].success) showPackageLog(pkg);
+                buildPanel();
+            });
+        }, "mio-package-install").start();
+    }
+
+    private void runPackageStartUp(@NonNull MioPackages.Package pkg) {
+        toast("start-up çalıştırılıyor: " + pkg.name);
+        new Thread(() -> {
+            final MioPackageRunner.Result result = MioPackageRunner.runStartUp(pkg);
+            runOnUiThread(() -> {
+                toast(result.message);
+                buildPanel();
+            });
+        }, "mio-package-start-up").start();
+    }
+
+    /** Install or update every package that has a new version. */
+    private void updateAllPackages() {
+        toast("Paketler güncelleniyor...");
+        new Thread(() -> {
+            final MioPackageRunner.Result result = MioPackageRunner.installAll();
+            runOnUiThread(() -> {
+                toast(result.message);
+                buildPanel();
+            });
+        }, "mio-package-update-all").start();
+    }
+
+    private void createTemplatePackage() {
+        MioPackages.Package pkg = MioPackageRunner.createTemplatePackage();
+        if (pkg == null) {
+            toast("Örnek paket oluşturulamadı: " + MioPackages.PACKAGE_DIR_PATH);
+            return;
+        }
+        mSelectedPackage = pkg.name;
+        toast(pkg.name + " oluşturuldu: .a.sh, .b.sh ve .start-up.sh");
+        buildPanel();
+    }
+
+    private void togglePackage(@NonNull MioPackages.Package pkg) {
+        boolean enabled = !pkg.isEnabled();
+        pkg.setEnabled(enabled);
+        toast(pkg.name + (enabled ? " açıldı (start-up çalışacak)." : " kapatıldı (start-up çalışmayacak)."));
+        buildPanel();
+    }
+
+    private void showPackageLog(@NonNull MioPackages.Package pkg) {
+        String log = pkg.getLogTail(60);
+        if (log.isEmpty()) log = "(günlük yok, paket henüz çalıştırılmadı)";
+
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — günlük")
+            .setMessage(log)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Terminalde aç", (dialog, which) -> runCommand(
+                "less " + MioPackages.quote(pkg.getLogFile().getAbsolutePath())))
+            .show();
+    }
+
+    private void showPackageFolder(@NonNull MioPackages.Package pkg) {
+        String path = pkg.directory.getAbsolutePath();
+        new AlertDialog.Builder(this)
+            .setTitle(pkg.name + " — klasör")
+            .setMessage(path + "\n\nDosyalar: " + pkg.scripts.size() + " betik")
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Terminalde aç", (dialog, which) -> runCommand(
+                "cd " + MioPackages.quote(path) + " && ls -l"))
             .show();
     }
 

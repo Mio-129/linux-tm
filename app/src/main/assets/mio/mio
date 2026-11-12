@@ -12,6 +12,11 @@
 #   mio renk red #FF0000    Tek bir rengi değiştir
 #   mio tam ekran           Tam ekranı aç/kapat
 #   mio ses tuslari         Ses tuşlarını medya sesi / terminal kısayolu arasında değiştir
+#   mio paket               Paketleri listeler (~/.mio/pkgs)
+#   mio paket kur <ad>      Paketin .a.sh / .b.sh betiklerini sırayla çalıştırır
+#   mio paket guncelle      Güncellenebilir tüm paketleri kurar
+#   mio paket baslat        Kurulu paketlerin .start-up.sh betiklerini çalıştırır
+#   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur
 #   mio teshis              Kurulu komutları ve sürümü kontrol eder (menü açılmıyorsa)
 #   mio menuler             Yan menüleri aç/kapat
 #   mio oturum              Yeni oturum aç
@@ -51,6 +56,12 @@ Kullanım: mio [komut]
   mio tam ekran           Tam ekranı açar/kapatır.
   mio ses                 Ses tuşlarını medya sesi <-> terminal kısayolu yapar.
   mio ses +|-             Medya sesini arttırır/azaltır.
+  mio paket               Paketleri listeler (~/.mio/pkgs/<paket>).
+  mio paket kur <ad>      Paketin .a.sh, .b.sh ve .start-up.sh betiklerini çalıştırır.
+  mio paket guncelle      Güncellenebilir tüm paketleri kurar.
+  mio paket baslat        Kurulu paketlerin .start-up.sh betiklerini çalıştırır.
+  mio paket sifirla       Örnek paketi (Older-Pack) oluşturur.
+  mio paket log <ad>      Paketin son çalıştırma günlüğünü gösterir.
   mio teshis              Komutların kurulu olup olmadığını ve sürümünü gösterir.
   mio menuler             Yan menüleri gösterir/gizler.
   mio oturum              Yeni oturum açar.
@@ -99,7 +110,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 4 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, ses açma tuşu kısayolu)\n'
+    printf 'mio sürüm: 5 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, paketler)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
@@ -141,6 +152,216 @@ diagnose() {
 
     printf '\nNot: menü hâlâ açılmıyorsa uygulamanın bu sürümü kurulu olmayabilir.\n'
     printf 'APK: Termux > uzun bas > Sürüm ve teşhis (Mio menü içinde)\n'
+}
+
+# ---------------------------------------------------------------------------------------------
+# Paketler: ~/.mio/pkgs/<paket> içindeki *.a.sh, *.b.sh ve *.start-up.sh betikleri
+# ---------------------------------------------------------------------------------------------
+PKG_DIR="$HOME/.mio/pkgs"
+PKG_STATE_DIR="$HOME/.mio/state"
+PKG_LOG_DIR="$HOME/.mio/log"
+
+pkg_find() {
+    # Paket klasörünü bul: tam ad, sonra büyük/küçük harf duyarsız
+    for dir in "$PKG_DIR"/*; do
+        [ -d "$dir" ] || continue
+        name=${dir##*/}
+        if [ "$name" = "$1" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+    for dir in "$PKG_DIR"/*; do
+        [ -d "$dir" ] || continue
+        name=${dir##*/}
+        lower_name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+        lower_arg=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+        if [ "$lower_name" = "$lower_arg" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+pkg_installed_version() {
+    file="$PKG_STATE_DIR/$1.installed"
+    [ -f "$file" ] && head -n 1 "$file"
+}
+
+pkg_version() {
+    file="$PKG_DIR/$1/VERSION"
+    [ -f "$file" ] && head -n 1 "$file"
+}
+
+pkg_is_enabled() {
+    [ ! -f "$PKG_STATE_DIR/$1.disabled" ]
+}
+
+pkg_has_update() {
+    installed=$(pkg_installed_version "$1")
+    version=$(pkg_version "$1")
+    [ -z "$installed" ] && return 0
+    [ -z "$version" ] && return 1
+    [ "$installed" != "$version" ]
+}
+
+pkg_list() {
+    mkdir -p "$PKG_DIR" "$PKG_STATE_DIR" "$PKG_LOG_DIR" 2>/dev/null
+    if [ -z "$(ls -A "$PKG_DIR" 2>/dev/null)" ]; then
+        printf 'Paket yok. Klasör: %s\n' "$PKG_DIR"
+        printf 'Örnek oluşturmak için: mio paket sifirla\n'
+        return 0
+    fi
+    printf 'Paketler (%s):\n' "$PKG_DIR"
+    for dir in "$PKG_DIR"/*; do
+        [ -d "$dir" ] || continue
+        name=${dir##*/}
+        installed=$(pkg_installed_version "$name")
+        version=$(pkg_version "$name")
+        state="kurulmadı"
+        if [ -n "$installed" ]; then
+            state="kurulu v$installed"
+            if [ -n "$version" ] && [ "$installed" != "$version" ]; then
+                state="kurulu v$installed (güncelleme: v$version)"
+            fi
+        fi
+        pkg_is_enabled "$name" || state="$state • kapalı"
+        printf '  %-20s %s\n' "$name" "$state"
+        for script in "$dir"/*.sh; do
+            [ -f "$script" ] || continue
+            printf '      %s\n' "${script##*/}"
+        done
+    done
+}
+
+pkg_install() {
+    dir=$(pkg_find "$1") || {
+        printf 'mio: paket bulunamadı: %s\n' "$1" >&2
+        printf 'Klasör: %s\n' "$PKG_DIR" >&2
+        return 1
+    }
+    name=${dir##*/}
+    mkdir -p "$PKG_STATE_DIR" "$PKG_LOG_DIR" 2>/dev/null
+    log="$PKG_LOG_DIR/$name.log"
+
+    printf 'Paket kuruluyor: %s\n' "$name"
+    {
+        printf '# %s — %s\n' "$name" "$(date 2>/dev/null)"
+    } > "$log"
+
+    # Ortak harf sırası: .a.sh, .b.sh, .c.sh, .d.sh, .e.sh
+    for letter in a b c d e; do
+        for script in "$dir"/*.$letter.sh; do
+            [ -f "$script" ] || continue
+            printf '\n>>> %s\n' "${script##*/}" >> "$log"
+            printf '\n>>> %s\n' "${script##*/}"
+
+            # Çıkış kodu borudan değil, doğrudan betikten alınmalı, yoksa tee'nin koduna bakılır
+            ( cd "$dir" && sh "$script" ) > "$PKG_LOG_DIR/.last-run" 2>&1
+            status=$?
+            cat "$PKG_LOG_DIR/.last-run" >> "$log"
+            cat "$PKG_LOG_DIR/.last-run"
+            rm -f "$PKG_LOG_DIR/.last-run"
+
+            if [ $status -ne 0 ]; then
+                printf 'mio: %s betiği hata verdi (çıkış kodu %s), paket kurulmadı.\n' \
+                    "${script##*/}" "$status" >&2
+                printf 'Sonraki aşama (.b.sh) çalıştırılmadı. Günlük: %s\n' "$log" >&2
+                return $status
+            fi
+        done
+    done
+
+    version=$(pkg_version "$name")
+    printf '%s\n' "${version:-1}" > "$PKG_STATE_DIR/$name.installed"
+    printf 'Paket kuruldu: %s%s\n' "$name" "${version:+ (v$version)}"
+    [ -f "$dir"/*.start-up.sh ] 2>/dev/null && printf 'start-up betiği bir sonraki açılışta çalışacak.\n'
+    return 0
+}
+
+pkg_update_all() {
+    found=0
+    status=0
+    for dir in "$PKG_DIR"/*; do
+        [ -d "$dir" ] || continue
+        name=${dir##*/}
+        if pkg_has_update "$name"; then
+            found=1
+            pkg_install "$name" || status=1
+        fi
+    done
+    [ $found -eq 0 ] && printf 'Güncellenecek paket yok.\n'
+    return $status
+}
+
+pkg_startup_all() {
+    status=0
+    for dir in "$PKG_DIR"/*; do
+        [ -d "$dir" ] || continue
+        name=${dir##*/}
+        [ -f "$PKG_STATE_DIR/$name.installed" ] || continue
+        pkg_is_enabled "$name" || continue
+        for script in "$dir"/*.start-up.sh; do
+            [ -f "$script" ] || continue
+            printf '>>> %s / %s\n' "$name" "${script##*/}"
+            ( cd "$dir" && sh "$script" ) || status=1
+        done
+    done
+    return $status
+}
+
+pkg_create_template() {
+    mkdir -p "$PKG_DIR/Older-Pack" 2>/dev/null || return 1
+    dir="$PKG_DIR/Older-Pack"
+    if [ ! -f "$dir/Older-Pack.a.sh" ]; then
+        cat > "$dir/Older-Pack.a.sh" <<'MIO_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+# Older-Pack — birinci aşama betiği (.a.sh), kurulacak komutlar buraya yazılır
+set -u
+echo "Older-Pack: birinci aşama başladı"
+echo "Ev dizini: $HOME"
+# Örnek: pkg install -y git
+echo "Older-Pack: birinci aşama tamam"
+MIO_EOF
+        chmod +x "$dir/Older-Pack.a.sh"
+    fi
+    if [ ! -f "$dir/Older-Tool.b.sh" ]; then
+        cat > "$dir/Older-Tool.b.sh" <<'MIO_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+# Older-Tool — ikinci aşama betiği (.b.sh), .a.sh başarılı olursa çalışır
+set -u
+echo "Older-Tool: ikinci aşama başladı"
+echo "Older-Tool: ikinci aşama tamam"
+MIO_EOF
+        chmod +x "$dir/Older-Tool.b.sh"
+    fi
+    if [ ! -f "$dir/Older-Pack.start-up.sh" ]; then
+        cat > "$dir/Older-Pack.start-up.sh" <<'MIO_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+# Older-Pack — başlangıç betiği (.start-up.sh), Termux her açıldığında çalışır
+set -u
+echo "Older-Pack: start-up çalıştı ($(date 2>/dev/null))"
+MIO_EOF
+        chmod +x "$dir/Older-Pack.start-up.sh"
+    fi
+    [ -f "$dir/VERSION" ] || printf '1\n' > "$dir/VERSION"
+    printf 'Örnek paket hazır: %s\n' "$dir"
+    printf 'Dosyalar: Older-Pack.a.sh, Older-Tool.b.sh, Older-Pack.start-up.sh, VERSION\n'
+}
+
+pkg_log() {
+    dir=$(pkg_find "$1") || {
+        printf 'mio: paket bulunamadı: %s\n' "$1" >&2
+        return 1
+    }
+    name=${dir##*/}
+    log="$PKG_LOG_DIR/$name.log"
+    if [ ! -f "$log" ]; then
+        printf 'mio: %s için günlük yok, önce "mio paket kur %s" çalıştır.\n' "$name" "$name"
+        return 1
+    fi
+    cat "$log"
 }
 
 if [ $# -eq 0 ]; then
@@ -238,6 +459,53 @@ case "$COMMAND" in
                 ;;
         esac
         exit $?
+        ;;
+    paket|paketler|packages|pkg)
+        if [ $# -eq 0 ]; then
+            pkg_list
+            exit $?
+        fi
+        PKG_ACTION="$1"
+        shift
+        case "$PKG_ACTION" in
+            kur|kur-fix|install|ekle|add|yukle|yükle)
+                if [ $# -eq 0 ]; then
+                    printf 'mio: kullanım: mio paket kur <ad>\n' >&2
+                    exit 2
+                fi
+                pkg_install "$1"
+                exit $?
+                ;;
+            guncelle|güncelle|update|upgrade)
+                pkg_update_all
+                exit $?
+                ;;
+            baslat|başlat|start|startup|start-up)
+                pkg_startup_all
+                exit $?
+                ;;
+            sifirla|sıfırla|ornek|örnek|template|init)
+                pkg_create_template
+                exit $?
+                ;;
+            log|gunluk|günlük)
+                if [ $# -eq 0 ]; then
+                    printf 'mio: kullanım: mio paket log <ad>\n' >&2
+                    exit 2
+                fi
+                pkg_log "$1"
+                exit $?
+                ;;
+            liste|list|durum|status)
+                pkg_list
+                exit $?
+                ;;
+            *)
+                printf 'mio: bilinmeyen paket komutu \"%s\"\n' "$PKG_ACTION" >&2
+                printf 'Kullanım: mio paket [liste|kur <ad>|guncelle|baslat|sifirla|log <ad>]\n' >&2
+                exit 2
+                ;;
+        esac
         ;;
     teshis|teşhis|diagnose|check|doctor)
         diagnose
