@@ -112,11 +112,40 @@ so status      # show the current state
 If the video itself has no audio track, the audio of a file with the same name is played when `so`
 is run, like `video.mp4` + `video.mp3`.
 
+### mio - menu, animations, colors (ZeroTermux style)
+
+The `mio` command and the **Mio menu** of this fork collect the features of the app in one place, in
+the spirit of the side menu and the "beautify" settings of ZeroTermux:
+
+```sh
+mio                    # open the Mio menu (background, animations, font, colors, fullscreen, sessions)
+mio kay                # snow animation on/off, drawn behind the terminal text
+mio parcacik           # particle animation on/off, floating glowing dots with links
+mio yazi +             # bigger font, "mio yazi -" smaller, "mio yazi 16" set a size
+mio tema matrix        # themes: varsayilan, matrix, gece, mor, sicak
+mio renk foreground '#00FF66'   # change a single color (foreground/background/cursor/red/green/...)
+mio tam ekran          # toggle fullscreen
+mio oturum             # open a new session
+mio yardim             # help
+```
+
+- The animations are drawn by `MioParticleView` **between the background media and the terminal
+  text**, the black background stays and the text stays readable. The chosen animation is stored in
+  the app preferences and restored on the next start.
+- The menu is also reachable from the terminal long press menu (**Mio menu**, **Snow animation**,
+  **Particle animation**) and from the **Mio menu** button at the top of the session drawer.
+- The menu can pick a photo/video from the gallery (it is copied to `~/.termux/mio/media/` first),
+  set the background by file name, change the font size with a slider, apply color themes, toggle
+  the animations and fullscreen, create/rename/switch sessions, and show the command list.
+- Fonts are stored with the Termux shared preferences, colors in `~/.termux/colors.properties` and
+  the fullscreen flag in `~/.termux/termux.properties`, so Termux:Styling and the settings activity
+  keep working as usual.
+
 ### How it works
 
 - The commands are POSIX shell scripts in `app/src/main/assets/mio/`, they are copied to
-  `$PREFIX/bin/swset` and `$PREFIX/bin/so` when the app starts (and after updates and bootstrap
-  reinstalls).
+  `$PREFIX/bin/swset`, `$PREFIX/bin/so` and `$PREFIX/bin/mio` when the app starts (and after updates
+  and bootstrap reinstalls).
 - The scripts send a broadcast (`termux-am broadcast`) to the app with the command, and the
   arguments are passed with a `key=value` request file at `~/.termux/mio/request` so that paths with
   spaces or unicode characters survive. If broadcasts are blocked on the device, the scripts fall
@@ -126,7 +155,8 @@ is run, like `video.mp4` + `video.mp3`.
   terminal renderer skips painting the default background color while a media background is set.
 - The background media is kept while the app is running (also while only the `TermuxService` runs in
   the background). If the app process is killed by the system, run `swset` again.
-- The background is also available from the long press menu of the terminal (**Background media**).
+- The background is also available from the long press menu of the terminal (**Background media**)
+  and from the Mio menu.
 
 ## Termux App and Plugins
 

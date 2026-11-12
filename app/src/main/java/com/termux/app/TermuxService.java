@@ -138,6 +138,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         SystemEventReceiver.registerPackageUpdateEvents(this);
 
         registerMioCommandReceiver();
+
+        // Reinstall the commands of this fork after an app update, the app may have been running
+        // while it was updated, in which case the commands of the new version are not installed yet
+        com.termux.app.mio.MioBootstrap.ensureInstalled(this);
     }
 
     /** Register the receiver for the `swset` and `so` command broadcasts. */
@@ -148,6 +152,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         intentFilter.addAction(MioCommandManager.ACTION_CLEAR_WALLPAPER);
         intentFilter.addAction(MioCommandManager.ACTION_STATUS);
         intentFilter.addAction(MioCommandManager.ACTION_HELP);
+        intentFilter.addAction(MioCommandManager.ACTION_MENU);
+        intentFilter.addAction(MioCommandManager.ACTION_ANIMATION);
+        intentFilter.addAction(MioCommandManager.ACTION_FONT_SIZE);
+        intentFilter.addAction(MioCommandManager.ACTION_COLORS);
+        intentFilter.addAction(MioCommandManager.ACTION_FULLSCREEN);
+        intentFilter.addAction(MioCommandManager.ACTION_SESSION);
+        intentFilter.addAction(MioCommandManager.ACTION_STYLE);
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

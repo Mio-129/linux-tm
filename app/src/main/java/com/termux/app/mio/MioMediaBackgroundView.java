@@ -56,6 +56,11 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
 
     private final ImageView mImageView;
     private final TextureView mTextureView;
+    /**
+     * The animated overlay (snow or particles) that is drawn above the media and below the
+     * terminal text, like the "snow" and "particles" effects of ZeroTermux.
+     */
+    private final MioParticleView mParticleView;
 
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
@@ -92,13 +97,17 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
     @Nullable
     private MediaStateListener mMediaStateListener;
 
-    /** Listener to be notified when a background media is set or cleared. */
+    /**
+     * Listener to be notified when the background of the terminal changes, either because a media
+     * was set or cleared with the `swset` command, or because an animation was enabled or disabled.
+     */
     public interface MediaStateListener {
         /**
-         * @param hasMedia {@code true} if a background media is set, in which case the terminal
-         * should be rendered transparently on top of it, {@code false} if the background is clear.
+         * @param hasBackground {@code true} if the terminal must be rendered transparently so that
+         * the media and/or the animation behind it is visible, {@code false} if the terminal
+         * should paint its own (black) background.
          */
-        void onMediaStateChanged(boolean hasMedia);
+        void onMediaStateChanged(boolean hasBackground);
     }
 
     public MioMediaBackgroundView(@NonNull Context context) {
@@ -129,6 +138,12 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
         mTextureView.setId(R.id.mio_media_texture_view);
         addView(mTextureView, 0, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
+        // The animation is added at the end since the xml children (like the terminal view) are
+        // added after this constructor, so the animation ends up above the media and below them
+        mParticleView = new MioParticleView(context);
+        mParticleView.setId(R.id.mio_particle_view);
+        addView(mParticleView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
         setInstance();
     }
 
@@ -142,11 +157,41 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
      */
     public void setMediaStateListener(@Nullable MediaStateListener listener) {
         mMediaStateListener = listener;
-        if (listener != null) listener.onMediaStateChanged(hasMedia());
+        if (listener != null) listener.onMediaStateChanged(hasVisualBackground());
     }
 
     private void notifyMediaStateChanged() {
-        if (mMediaStateListener != null) mMediaStateListener.onMediaStateChanged(hasMedia());
+        if (mMediaStateListener != null) mMediaStateListener.onMediaStateChanged(hasVisualBackground());
+    }
+
+    /**
+     * @return Returns {@code true} if the terminal must be rendered transparently, which is the
+     * case if a media is set or an animation is enabled behind it.
+     */
+    public boolean hasVisualBackground() {
+        return hasMedia() || mParticleView.getMode() != MioParticleView.Mode.NONE;
+    }
+
+    /** @return Returns the animation view that is drawn above the media and below the terminal. */
+    @NonNull
+    public MioParticleView getParticleView() {
+        return mParticleView;
+    }
+
+    /**
+     * Set the animation that is drawn behind the terminal text.
+     *
+     * @param mode The animation, {@link MioParticleView.Mode#NONE} disables it.
+     */
+    public void setAnimationMode(@NonNull MioParticleView.Mode mode) {
+        mParticleView.setMode(mode);
+        notifyMediaStateChanged();
+    }
+
+    /** @return Returns the currently drawn animation. */
+    @NonNull
+    public MioParticleView.Mode getAnimationMode() {
+        return mParticleView.getMode();
     }
 
     void setInstance() {

@@ -1,0 +1,194 @@
+#!/data/data/com.termux/files/usr/bin/sh
+#
+# mio - Termux'un bu çatalının (fork) menüsünü ve ayarlarını terminalden yönetir.
+#
+# Kullanım:
+#   mio                     Menüyü aç
+#   mio kay                 Kar animasyonunu aç/kapat
+#   mio parcacik            Parçacık animasyonunu aç/kapat
+#   mio yazi +              Yazı boyutunu büyüt
+#   mio yazi -              Yazı boyutunu küçült
+#   mio tema matrix         Hazır bir tema uygula
+#   mio renk red #FF0000    Tek bir rengi değiştir
+#   mio tam ekran           Tam ekranı aç/kapat
+#   mio menuler             Yan menüleri aç/kapat
+#   mio oturum              Yeni oturum aç
+#   mio yardim              Bu yardımı gösterir
+#
+# Notlar:
+#   * Komutlar uygulamanın kendi yayın alıcısına (broadcast) mesaj yollar, termux-api gerekmez.
+#   * Ekran görüntüsü/medya komutları için: swset <dosya>, swset off, so, so off.
+
+if [ -z "${PREFIX:-}" ]; then
+    PREFIX=/data/data/com.termux/files/usr
+fi
+
+ACTION_MENU="com.termux.mio.action.MENU"
+ACTION_ANIMATION="com.termux.mio.action.ANIMATION"
+ACTION_FONT_SIZE="com.termux.mio.action.FONT_SIZE"
+ACTION_COLORS="com.termux.mio.action.COLORS"
+ACTION_FULLSCREEN="com.termux.mio.action.FULLSCREEN"
+ACTION_SESSION="com.termux.mio.action.SESSION"
+ACTION_STYLE="com.termux.mio.action.STYLE"
+
+REQUEST_DIR="$HOME/.termux/mio"
+REQUEST_FILE="$REQUEST_DIR/request"
+
+usage() {
+    cat <<EOF
+Kullanım: mio [komut]
+
+  mio                     Menüyü açar (arka plan, animasyon, yazı boyutu, renkler, tam ekran...)
+  mio kay                 Kar animasyonunu açar/kapatır.
+  mio parcacik            Parçacık animasyonunu açar/kapatır.
+  mio yazi +|-            Yazı boyutunu büyütür/küçültür.
+  mio yazi <sayı>         Yazı boyutunu ayarlar, örnek: mio yazi 14
+  mio tema <ad>           Hazır tema uygular: varsayilan, matrix, gece, mor, sicak
+  mio renk <ad> <#RRGGBB> Tek rengi değiştirir, örnek: mio renk foreground #00FF66
+  mio tam ekran           Tam ekranı açar/kapatır.
+  mio menuler             Yan menüleri gösterir/gizler.
+  mio oturum              Yeni oturum açar.
+  mio yardim              Bu yardımı gösterir.
+
+Arka plan medyası (fotoğraf/video):  swset <dosya>   swset off
+Videonun sesi:                       so   so off   so stop
+EOF
+}
+
+run_am() {
+    if [ -x "$PREFIX/bin/termux-am" ]; then
+        "$PREFIX/bin/termux-am" "$@"
+    elif command -v termux-am >/dev/null 2>&1; then
+        termux-am "$@"
+    else
+        /system/bin/am "$@"
+    fi
+}
+
+send_command() {
+    if run_am broadcast "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    run_am startservice -n com.termux/com.termux.app.TermuxService "$@" >/dev/null 2>&1
+}
+
+write_request() {
+    mkdir -p "$REQUEST_DIR" 2>/dev/null
+    {
+        printf 'created=%s\n' "$(date +%s 2>/dev/null || echo 0)"
+        printf '%s\n' "$@"
+    } > "$REQUEST_FILE" 2>/dev/null
+}
+
+# Komutu çalıştır: $1 eylem, kalanı --es anahtar değer çiftleri
+send() {
+    action="$1"
+    shift
+    write_request "command=mio" "action=$action"
+    if ! send_command -a "$action" "$@"; then
+        printf 'mio: komut uygulamaya iletilemedi, Termux açık mı?\n' >&2
+        return 1
+    fi
+    return 0
+}
+
+if [ $# -eq 0 ]; then
+    send "$ACTION_MENU"
+    exit $?
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    -h|--help|help|yardim|yardım)
+        usage
+        exit 0
+        ;;
+    menu|menü)
+        send "$ACTION_MENU"
+        exit $?
+        ;;
+    kar|snow|kay)
+        send "$ACTION_ANIMATION" --es mode snow
+        exit $?
+        ;;
+    parcacik|parçacık|particle|particles|partikul)
+        send "$ACTION_ANIMATION" --es mode particles
+        exit $?
+        ;;
+    animasyon|anim|stop|durdur)
+        send "$ACTION_ANIMATION" --es mode off
+        exit $?
+        ;;
+    yazi|yazı|font)
+        if [ $# -eq 0 ]; then
+            send "$ACTION_FONT_SIZE" --es mode status
+            exit $?
+        fi
+        case "$1" in
+            +|buyut|büyüt|up)
+                send "$ACTION_FONT_SIZE" --es mode increase
+                ;;
+            -|kucult|küçült|down)
+                send "$ACTION_FONT_SIZE" --es mode decrease
+                ;;
+            varsayilan|varsayılan|default|reset)
+                send "$ACTION_FONT_SIZE" --es mode reset
+                ;;
+            *)
+                send "$ACTION_FONT_SIZE" --es mode set --es size "$1"
+                ;;
+        esac
+        exit $?
+        ;;
+    renk|color|renkler|colors)
+        if [ $# -eq 0 ]; then
+            send "$ACTION_COLORS" --es mode status
+            exit $?
+        fi
+        case "$1" in
+            sifirla|sıfırla|reset|varsayilan|varsayılan)
+                send "$ACTION_COLORS" --es mode reset
+                exit $?
+                ;;
+            *)
+                if [ $# -lt 2 ]; then
+                    printf 'mio: kullanım: mio renk <ad> <#RRGGBB>\n' >&2
+                    exit 2
+                fi
+                send "$ACTION_COLORS" --es mode set --es key "$1" --es value "$2"
+                exit $?
+                ;;
+        esac
+        ;;
+    tema|theme)
+        if [ $# -eq 0 ]; then
+            printf 'mio: temalar: varsayilan, matrix, gece, mor, sicak\n' >&2
+            exit 2
+        fi
+        send "$ACTION_COLORS" --es mode theme --es name "$1"
+        exit $?
+        ;;
+    tam|tamekran|fullscreen|full)
+        send "$ACTION_FULLSCREEN"
+        exit $?
+        ;;
+    menuler|menüler|menu-bar|bar)
+        send "$ACTION_STYLE" --es mode toggle-bars
+        exit $?
+        ;;
+    oturum|session|new)
+        send "$ACTION_SESSION" --es mode new
+        exit $?
+        ;;
+    durum|status)
+        send "$ACTION_STYLE" --es mode status
+        exit $?
+        ;;
+    *)
+        printf 'mio: bilinmeyen komut "%s"\n\n' "$COMMAND" >&2
+        usage
+        exit 2
+        ;;
+esac

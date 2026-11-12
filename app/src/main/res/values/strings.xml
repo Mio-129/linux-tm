@@ -61,9 +61,27 @@
 
     <!-- Custom commands of this fork -->
     <string name="action_mio_background_media">Background media</string>
-    <string name="mio_background_media_dialog_title">Background media</string>
-    <string name="mio_background_media_dialog_message">Set an image or a video behind the terminal, or enable the audio of the video.\n\nswset &lt;file&gt;\nswset\nswset off\nso\nso off</string>
+    <string name="mio_background_media_dialog_title">Arka plan medyası</string>
+    <string name="mio_background_media_dialog_message">Fotoğraf veya videoyu terminalin arkasına koyar, videonun sesini açar.\n\nswset &lt;dosya&gt;\nswset\nswset off\nso\nso off</string>
     <string name="mio_background_media_dialog_clear">Clear</string>
+
+    <!-- Mio menu of this fork -->
+    <string name="action_mio_menu">Mio menü</string>
+    <string name="action_mio_snow">Kar animasyonu</string>
+    <string name="action_mio_particles">Parçacık animasyonu</string>
+    <string name="mio_menu_title">Mio menü</string>
+    <string name="mio_menu_background_file_title">Arka plan medyası</string>
+    <string name="mio_menu_background_file_message">Bulunduğun klasördeki veya ana dizindeki dosya adı, örnek: foto.png veya video.mp4</string>
+    <string name="mio_menu_apply">Uygula</string>
+    <string name="mio_menu_font_size_title">Yazı boyutu</string>
+    <string name="mio_menu_colors_title">Renkler ve tema</string>
+    <string name="mio_menu_sessions_title">Oturumlar</string>
+    <string name="mio_menu_commands_title">Komutlar</string>
+    <string name="mio_menu_commands_message">Tüm komutlar terminalde de çalışır.</string>
+    <string name="mio_menu_open_help">Yardım</string>
+    <string name="mio_menu_run_command">Komut çalıştır</string>
+    <string name="mio_menu_run">Çalıştır</string>
+    <string name="mio_menu_pick_file">Fotoğraf veya video seç</string>
 
 
 

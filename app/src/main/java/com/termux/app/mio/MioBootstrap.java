@@ -19,8 +19,8 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Installs the `swset` and `so` command scripts of this fork to `$PREFIX/bin`, so that they can be
- * run from the terminal like any other command.
+ * Installs the `swset`, `so` and `mio` command scripts of this fork to `$PREFIX/bin`, so that they
+ * can be run from the terminal like any other command.
  *
  * The scripts are stored in the assets of the app at `assets/mio/` and are copied the first time
  * the app is run, and again after an app update (the app version name is written to
@@ -31,12 +31,21 @@ public final class MioBootstrap {
     public static final String LOG_TAG = "MioBootstrap";
 
     /** The name of the commands installed to `$PREFIX/bin`. */
-    public static final List<String> COMMANDS = Arrays.asList("swset", "so");
+    public static final List<String> COMMANDS = Arrays.asList("swset", "so", "mio");
 
     private static final String ASSET_DIR = "mio";
     private static final String VERSION_FILE_PATH = TermuxConstants.TERMUX_FILES_DIR_PATH + "/.mio-commands-version";
 
     private MioBootstrap() {
+    }
+
+    /**
+     * Also called when the app is already running, so that the commands are installed right after
+     * an update without the user having to restart the app.
+     */
+    public static synchronized void ensureInstalled(@Nullable Context context) {
+        if (context == null) return;
+        install(context);
     }
 
     /**
