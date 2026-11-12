@@ -144,8 +144,10 @@ public final class MioAudioStream {
             mVolume = next;
 
             try {
+                // The system volume panel is shown, so that the user can see that the button worked
                 mAudioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
-                    increase ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER, 0);
+                    increase ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER,
+                    AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to adjust the media volume", e);
             }
@@ -153,6 +155,32 @@ public final class MioAudioStream {
             String problem = MioMediaBackgroundView.getInstance() == null ? null
                 : MioMediaBackgroundView.getInstance().getAudioProblem();
             showToast("Ses seviyesi: " + next + "/" + max + (problem == null ? "" : " — " + problem), true);
+        });
+    }
+
+    /**
+     * Set the volume of the media stream directly, used by the volume slider of the panel.
+     *
+     * @param percent The new volume as a `0-100` percentage.
+     */
+    public void setVolumePercent(final int percent) {
+        mMainHandler.post(() -> {
+            if (!mLatched) {
+                mLatched = true;
+                MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();
+                if (backgroundView != null && backgroundView.isVideo()) backgroundView.setAudioEnabled(true);
+            }
+
+            if (mAudioManager == null) return;
+            try {
+                int max = mAudioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int index = Math.round(Math.max(0, Math.min(100, percent)) / 100f * max);
+                mVolume = index;
+                mAudioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index,
+                    AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to set the media volume", e);
+            }
         });
     }
 

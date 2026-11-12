@@ -49,7 +49,8 @@ Kullanım: mio [komut]
   mio tema <ad>           Hazır tema uygular: varsayilan, matrix, gece, mor, sicak
   mio renk <ad> <#RRGGBB> Tek rengi değiştirir, örnek: mio renk foreground #00FF66
   mio tam ekran           Tam ekranı açar/kapatır.
-  mio ses tuslari         Ses tuşlarını medya sesi <-> terminal kısayolu yapar.
+  mio ses                 Ses tuşlarını medya sesi <-> terminal kısayolu yapar.
+  mio ses +|-             Medya sesini arttırır/azaltır.
   mio teshis              Komutların kurulu olup olmadığını ve sürümünü gösterir.
   mio menuler             Yan menüleri gösterir/gizler.
   mio oturum              Yeni oturum açar.
@@ -220,7 +221,17 @@ case "$COMMAND" in
         exit $?
         ;;
     ses|ses-tuslari|volume|vol)
-        send "$ACTION_VOLUME_KEYS"
+        case "$1" in
+            +|arttir|arttır|up)
+                send "$ACTION_AUDIO_STREAM" --es mode volume-up
+                ;;
+            -|azalt|down)
+                send "$ACTION_AUDIO_STREAM" --es mode volume-down
+                ;;
+            *)
+                send "$ACTION_VOLUME_KEYS"
+                ;;
+        esac
         exit $?
         ;;
     teshis|teşhis|diagnose|check|doctor)

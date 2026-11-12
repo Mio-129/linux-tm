@@ -932,10 +932,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onActivityResult: requestCode: " + requestCode + ", resultCode: "  + resultCode + ", data: "  + IntentUtils.getIntentString(data));
         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
             requestStoragePermission(true);
-        } else if (requestCode == MioMenu.PICK_MEDIA_REQUEST_CODE) {
-            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                MioMenu.handlePickedMediaFile(this, data.getData());
-            }
         }
     }
 
