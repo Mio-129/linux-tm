@@ -371,6 +371,15 @@ public final class MioMediaBackgroundView extends FrameLayout implements Texture
         return mIsVideo && mAudioEnabled;
     }
 
+    /**
+     * @return Returns the reason the audio of the current video may not be audible, like
+     * "videoda ses yok, yanına aynı isimli bir .mp3/.m4a koy", or {@code null} if it should work.
+     */
+    @Nullable
+    public String getAudioProblem() {
+        return mAudioProblem;
+    }
+
     public boolean isVideo() {
         return mIsVideo;
     }
