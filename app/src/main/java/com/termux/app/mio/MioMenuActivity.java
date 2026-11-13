@@ -1614,6 +1614,10 @@ public final class MioMenuActivity extends Activity {
         final String marker = MioDataMigration.readMarker();
 
         StringBuilder message = new StringBuilder();
+        if (!com.termux.shared.termux.TermuxConstants.TERMUX_PACKAGE_NAME.equals("com.mio")) {
+            message.append("UYARI: uygulama \"").append(com.termux.shared.termux.TermuxConstants.TERMUX_PACKAGE_NAME)
+                .append("\" olarak derlenmiş; veri yolu her zaman kendi paket yoludur.\n\n");
+        }
         message.append("Uygulama verisi:\n  ").append(MioDataMigration.NEW_DATA_DIR_PATH).append("\n")
             .append("(dosya yöneticisinde Android/data/com.mio)\n\n");
         message.append("Ev klasörü: ").append(HOME).append("\n");
