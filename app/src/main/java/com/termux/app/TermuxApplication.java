@@ -73,6 +73,18 @@ public class TermuxApplication extends Application {
             TermuxShellEnvironment.writeEnvironmentToFile(this);
         }
 
+        // Copy the data of an old `com.termux` installation (home, ~/.mio, ~/.termux) to
+        // `Android/data/com.mio`, if there is any. Does nothing once the migration was done.
+        new Thread(() -> {
+            try {
+                com.termux.app.mio.MioDataMigration.Result result =
+                    com.termux.app.mio.MioDataMigration.migrateIfNeeded(this);
+                if (result != null) Logger.logInfo(LOG_TAG, "Mio veri geçişi: " + result.message);
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Mio veri geçişi başarısız", e);
+            }
+        }, "mio-data-migration").start();
+
         // Install the custom `swset` and `so` commands to $PREFIX/bin, if the prefix exists. This is
         // also called after the bootstrap is extracted, see `TermuxInstaller`
         MioBootstrap.install(this);

@@ -548,3 +548,19 @@ statik sunucuda açılabilir.
 # yerel önizleme
 python3 -m http.server 8000 --directory docs
 ```
+
+## Paket adı ve veri klasörü (`com.mio`)
+
+- **Uygulama kimliği:** `applicationId "com.mio"` (`app/build.gradle`). Java paketleri `com.termux.*`
+  olarak kalır, çünkü `termux-shared` / `terminal-view` kütüphaneleri ve eklentiler o adları import eder.
+- **Uygulama verisi:** `Android/data/com.mio` = `/data/data/com.mio` (ev klasörü, `~/.mio`, `~/.termux`).
+- **Terminal öneki sabit:** `$PREFIX` hâlâ `/data/data/com.termux/files/usr`. Bootstrap ikililerinde bu
+  yol gömülü (shebang'ler, kütüphane symlink'leri, apt) — öneki değiştirmek kurulu paketleri
+  çalışmaz hale getirir. `mio` betiği ve panelin çalıştırdığı komutlar da bu yolu kullanır.
+- **Veri geçişi:** eski `com.termux` kurulumunun `files/home` klasörü yeni klasöre kopyalanır
+  (`MioDataMigration`). İlk açılışta arka planda denenir; elle çalıştırmak için
+  **Terminal araçları > Veriler > "Eski verileri taşı"**. Mevcut dosyaların üzerine yazılmaz, başarılı
+  geçiş `.mio-migrated` işaretiyle bir kez yapılır. `mio teshis` de geçiş durumunu gösterir.
+- **APK adı:** `mio_apt-android-7-debug_arm64-v8a.apk`.
+- Not: Android'de `/data/data` kullanıcıya kapalıdır; dosya yöneticileri aynı klasörü
+  `Android/data/com.mio` olarak gösterir.

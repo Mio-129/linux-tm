@@ -86,7 +86,7 @@ send_command() {
     if run_am broadcast "$@" >/dev/null 2>&1; then
         return 0
     fi
-    run_am startservice -n com.termux/com.termux.app.TermuxService "$@" >/dev/null 2>&1
+    run_am startservice -n com.mio/com.termux.app.TermuxService "$@" >/dev/null 2>&1
 }
 
 write_request() {
@@ -124,7 +124,15 @@ diagnose() {
         fi
     done
 
-    printf '\nUygulama paketi: com.termux\n'
+    printf '\nUygulama paketi: com.mio\n'
+    printf 'Uygulama verisi: /data/data/com.mio  (dosya yöneticisinde Android/data/com.mio)\n'
+    if [ -f /data/data/com.mio/files/.mio-migrated ]; then
+        printf 'Eski com.termux verileri: taşındı (%s)\n' "$(cat /data/data/com.mio/files/.mio-migrated 2>/dev/null)"
+    elif [ -d /data/data/com.termux/files/home ]; then
+        printf 'Eski com.termux verileri: TAŞINMADI - menü > Veriler > "Eski verileri taşı"\n'
+    else
+        printf 'Eski com.termux verileri: yok\n'
+    fi
     if [ -x "$PREFIX/bin/termux-am" ]; then
         printf 'termux-am: var\n'
     else
@@ -133,7 +141,7 @@ diagnose() {
 
     printf '\nUygulama çalışıyor mu (servis):\n'
     if command -v pidof >/dev/null 2>&1; then
-        pidof com.termux >/dev/null 2>&1 && printf '  evet\n' || printf '  hayır\n'
+        pidof com.mio >/dev/null 2>&1 && printf '  evet\n' || printf '  hayır\n'
     else
         printf '  pidof yok, kontrol edilemedi\n'
     fi

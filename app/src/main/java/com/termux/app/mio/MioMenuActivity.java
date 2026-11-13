@@ -354,6 +354,7 @@ public final class MioMenuActivity extends Activity {
         addButton(toolsRow2, "X11 kur", v -> runCommand(
             "pkg install -y x11-repo >/dev/null 2>&1; pkg install -y termux-x11-nightly xfce4 >/dev/null 2>&1; echo X11 kuruldu"));
         addButton(toolsRow2, "Teşhis", v -> runCommand("mio teshis"));
+        addButton(toolsRow2, "Veriler", v -> showDataMigrationDialog());
         mRoot.addView(toolsRow2);
 
         // ------------------------------------------------------------- ZeroTermux araçları ----
@@ -1599,6 +1600,69 @@ public final class MioMenuActivity extends Activity {
                     + "> ~/.mio/menu.d/varsayilan.menu; ls -l ~/.mio/menu.d"))
             .setNegativeButton(android.R.string.cancel, null)
             .show();
+    }
+
+    /**
+     * The app data of this fork lives in `Android/data/com.mio` (`/data/data/com.mio`). This dialog
+     * shows where it is and copies the data of an old `com.termux` installation, whose files are not
+     * readable by this app any more (see {@link MioDataMigration}).
+     */
+    private void showDataMigrationDialog() {
+        final boolean oldData = MioDataMigration.hasOldData();
+        final boolean readable = MioDataMigration.canReadOldData();
+        final boolean migrated = MioDataMigration.isDone();
+        final String marker = MioDataMigration.readMarker();
+
+        StringBuilder message = new StringBuilder();
+        message.append("Uygulama verisi:\n  ").append(MioDataMigration.NEW_DATA_DIR_PATH).append("\n")
+            .append("(dosya yöneticisinde Android/data/com.mio)\n\n");
+        message.append("Ev klasörü: ").append(HOME).append("\n");
+        message.append("Terminal öneki: ").append(com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH)
+            .append("\n(kurulu paketler bu yolu beklediği için sabit)\n\n");
+        message.append("Eski kurulum (").append(MioDataMigration.OLD_DATA_DIR_PATH).append("): ")
+            .append(!oldData ? "yok" : (readable ? "var, okunabiliyor" : "var, okunamıyor")).append('\n');
+        message.append("Geçiş: ").append(migrated ? "yapıldı" : "yapılmadı");
+        if (marker != null) message.append(" (").append(marker).append(')');
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("Mio verileri")
+            .setMessage(message.toString())
+            .setPositiveButton("Eski verileri taşı", (dialog, which) -> {
+                new AlertDialog.Builder(this)
+                    .setTitle("Eski verileri taşı")
+                    .setMessage("~ (projeler, ~/.mio paketleri, ~/.termux ayarları) eski com.termux "
+                        + "kurulumundan kopyalanır.\n\nMevcut dosyaların üzerine yazılmaz.\n"
+                        + "Kopyalama bittikten sonra eski Termux'u kaldırabilirsin.")
+                    .setPositiveButton("Taşı", (d, w) -> {
+                        final MioDataMigration.Result result = MioDataMigration.migrate(this, true);
+                        new AlertDialog.Builder(this)
+                            .setTitle(result.migrated ? "Geçiş tamam" : "Geçiş yapılamadı")
+                            .setMessage(result.message)
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            })
+            .setNeutralButton("Yolu kopyala", (dialog, which) -> {
+                android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
+                        "mio", MioDataMigration.NEW_DATA_DIR_PATH));
+                    toast("Yol kopyalandı.");
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null);
+
+        if (migrated) {
+            builder.setNeutralButton("Geçişi sıfırla", (dialog, which) -> {
+                MioDataMigration.reset();
+                toast("Geçiş sıfırlandı, sonraki açılışta tekrar denenir.");
+            });
+        }
+
+        builder.show();
     }
 
     private void showFtpDialog() {

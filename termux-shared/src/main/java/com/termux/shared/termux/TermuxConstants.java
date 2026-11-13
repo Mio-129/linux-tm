@@ -348,8 +348,8 @@ public final class TermuxConstants {
 
     /** Termux app name */
     public static final String TERMUX_APP_NAME = "Termux"; // Default: "Termux"
-    /** Termux package name */
-    public static final String TERMUX_PACKAGE_NAME = "com.termux"; // Default: "com.termux"
+    /** Termux package name (this fork is installed as "com.mio", see app/build.gradle) */
+    public static final String TERMUX_PACKAGE_NAME = "com.mio"; // Default: "com.termux"
     /** Termux GitHub repo name */
     public static final String TERMUX_GITHUB_REPO_NAME = "termux-app"; // Default: "termux-app"
     /** Termux GitHub repo url */
@@ -591,8 +591,18 @@ public final class TermuxConstants {
 
 
 
-    /** Termux app $PREFIX directory path */
-    public static final String TERMUX_PREFIX_DIR_PATH = TERMUX_FILES_DIR_PATH + "/usr"; // Default: "/data/data/com.termux/files/usr"
+    /**
+     * Termux app $PREFIX directory path.
+     *
+     * The app of this fork is installed as "com.mio", so the data of the app is in
+     * "/data/data/com.mio", which is what the user sees as "Android/data/com.mio".
+     *
+     * The binaries of the bootstrap have the old "/data/data/com.termux/files/usr" path hardcoded
+     * in them (the shebangs of the shell scripts, the symlinks of the libraries and apt), so the
+     * prefix stays at the Termux path; otherwise the installed packages would not be able to run.
+     * The same path is used by the `mio` command script and by every command the panel runs.
+     */
+    public static final String TERMUX_PREFIX_DIR_PATH = "/data/data/com.termux/files/usr"; // Default: "/data/data/com.termux/files/usr"
     /** Termux app $PREFIX directory */
     public static final File TERMUX_PREFIX_DIR = new File(TERMUX_PREFIX_DIR_PATH);
 
