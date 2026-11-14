@@ -37,6 +37,10 @@ public final class MioRequest {
     public static final String LOG_TAG = "MioRequest";
 
     public static final String KEY_COMMAND = "command";
+    /** The action of the command, e.g. `com.termux.mio.action.MENU`. */
+    public static final String KEY_ACTION = "action";
+    /** The command line of the `mio` script, so that the app can handle commands without `am`. */
+    public static final String KEY_ARGS = "args";
     public static final String KEY_NAME = "name";
     public static final String KEY_MEDIA_TYPE = "media_type";
     public static final String KEY_AUDIO = "audio";
@@ -114,6 +118,59 @@ public final class MioRequest {
         File requestFile = new File(REQUEST_FILE_PATH);
         if (requestFile.isFile() && !requestFile.delete())
             Logger.logWarn(LOG_TAG, "Failed to delete request file \"" + requestFile.getAbsolutePath() + "\"");
+    }
+
+    /**
+     * Read the request file regardless of the command that wrote it.
+     *
+     * The `mio` command of the terminal can not always reach the app: `am` may be blocked by the
+     * system ("am broadcast" and "am startservice" are restricted for apps that are not exported, and
+     * some ROMs block `am start` for the shell user). The script always writes its request file, so
+     * the app polls it while the service is running and handles the command from there, without any
+     * broadcast.
+     *
+     * @return The request, or {@code null} if there is none or it was already handled.
+     */
+    @Nullable
+    public static MioRequest fromAnyRequestFile() {
+        File requestFile = new File(REQUEST_FILE_PATH);
+        if (!requestFile.isFile()) return null;
+
+        MioRequest request = new MioRequest();
+        try (BufferedReader reader = new BufferedReader(
+            new InputStreamReader(new FileInputStream(requestFile), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                int index = line.indexOf('=');
+                if (index <= 0) continue;
+                request.mValues.put(line.substring(0, index).trim(), line.substring(index + 1).trim());
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read \"" + requestFile.getAbsolutePath() + "\"", e);
+            return null;
+        }
+
+        return request.mValues.isEmpty() ? null : request;
+    }
+
+    /** @return The value of the `created` key as seconds, {@code -1} if it is missing. */
+    public long getCreatedSeconds() {
+        try {
+            return Long.parseLong(mValues.get("created"));
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** @return The action of the command, {@code null} if the request has none. */
+    @Nullable
+    public String getAction() {
+        return get(KEY_ACTION);
+    }
+
+    /** @return {@code true} if the request was written by the `mio` command of the terminal. */
+    public boolean isFromMioCommand() {
+        return "mio".equals(get(KEY_COMMAND));
     }
 
     @Nullable

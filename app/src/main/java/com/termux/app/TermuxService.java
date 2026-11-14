@@ -139,6 +139,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         registerMioCommandReceiver();
 
+        // Also handle the requests written by the `mio` command, in case `am` is blocked by the
+        // system (see MioCommandManager#startRequestPolling)
+        MioCommandManager.getInstance(this).startRequestPolling();
+
         // Reinstall the commands of this fork after an app update, the app may have been running
         // while it was updated, in which case the commands of the new version are not installed yet
         com.termux.app.mio.MioBootstrap.ensureInstalled(this);
@@ -240,6 +244,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     @Override
     public void onDestroy() {
         Logger.logVerbose(LOG_TAG, "onDestroy");
+
+        MioCommandManager.getInstance(this).stopRequestPolling();
 
         TermuxShellUtils.clearTermuxTMPDIR(true);
 

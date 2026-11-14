@@ -183,6 +183,78 @@ public final class MioCommandManager {
         return sInstance;
     }
 
+    /** How often the request file of the `mio` command is checked while the service runs. */
+    private static final long REQUEST_POLL_INTERVAL_MS = 600;
+
+    /** The last handled request, so that the same request is not handled twice. */
+    private long mLastHandledRequestSeconds = -1;
+    private String mLastHandledRequestAction;
+
+    private Runnable mRequestPollRunnable;
+
+    /**
+     * Start checking the request file written by the `mio` command, so that the commands of the
+     * terminal work even when `am broadcast`/`am startservice`/`am start` are blocked by the system.
+     * Called when {@link com.termux.app.TermuxService} is created; the polling runs on the main
+     * thread and is cheap (one `File.isFile()` per interval).
+     */
+    public void startRequestPolling() {
+        if (mRequestPollRunnable != null) return;
+
+        mRequestPollRunnable = new Runnable() {
+            @Override
+            public void run() {
+                handlePendingRequest();
+                mMainHandler.postDelayed(this, REQUEST_POLL_INTERVAL_MS);
+            }
+        };
+        mMainHandler.postDelayed(mRequestPollRunnable, REQUEST_POLL_INTERVAL_MS);
+    }
+
+    /** Stop the polling, called when the service is destroyed. */
+    public void stopRequestPolling() {
+        if (mRequestPollRunnable != null) {
+            mMainHandler.removeCallbacks(mRequestPollRunnable);
+            mRequestPollRunnable = null;
+        }
+    }
+
+    /**
+     * Handle the request file of the `mio` command if it was written since the last handled one.
+     *
+     * @return {@code true} if a request was handled.
+     */
+    public boolean handlePendingRequest() {
+        MioRequest request = MioRequest.fromAnyRequestFile();
+        if (request == null) return false;
+
+        long created = request.getCreatedSeconds();
+        String action = request.getAction();
+        if (created <= 0 || action == null) return false;
+        if (created < System.currentTimeMillis() / 1000 - 30) return false;
+        if (created == mLastHandledRequestSeconds && action.equals(mLastHandledRequestAction)) return false;
+
+        mLastHandledRequestSeconds = created;
+        mLastHandledRequestAction = action;
+
+        Logger.logInfo(LOG_TAG, "Handling the request \"" + action + "\" from the request file");
+        MioRequest.deleteRequestFile();
+
+        Intent intent = new Intent(action);
+        String args = request.get(KEY_ARGS_FOR_INTENT);
+        if (args != null) {
+            // `mode up`, `mode down`, `size 20`, ... are passed as --es mode up
+            String[] parts = args.trim().split("\\s+");
+            for (int i = 0; i + 1 < parts.length; i += 2) {
+                intent.putExtra(parts[i], parts[i + 1]);
+            }
+        }
+        return handleServiceIntent(intent);
+    }
+
+    /** The key of the arguments of the command in the request file. */
+    private static final String KEY_ARGS_FOR_INTENT = MioRequest.KEY_ARGS;
+
     /**
      * Handle the intents sent to the {@link com.termux.app.TermuxActivity} with
      * {@link android.app.Activity#onNewIntent(Intent)}.

@@ -120,18 +120,30 @@ fix_sources() {
     return 0
 }
 
+# Niyet gönder: termux-am soketi -> termux-am -> /system/bin/am
+# `termux-am` olmadan `am` komutu Android 10+ üzerinde kabuk kullanıcısına kapalıdır
+# ("SecurityException"), o yüzden önce soket denenir.
+
 run_am() {
     if [ -x "$PREFIX/bin/termux-am" ]; then
-        "$PREFIX/bin/termux-am" "$@"
-    elif command -v termux-am >/dev/null 2>&1; then
-        termux-am "$@"
-    else
-        /system/bin/am "$@"
+        "$PREFIX/bin/termux-am" "$@" 2>/dev/null && return 0
     fi
+    if command -v termux-am >/dev/null 2>&1; then
+        termux-am "$@" 2>/dev/null && return 0
+    fi
+    if [ -x /system/bin/am ]; then
+        /system/bin/am "$@" >/dev/null 2>&1 && return 0
+    fi
+    return 1
 }
 
 send_command() {
-    if run_am broadcast "$@" >/dev/null 2>&1; then
+    # `am` prints "Broadcast completed" when the broadcast really reached the app
+    out=$(run_am broadcast "$@" 2>&1)
+    case "$out" in
+        *"Broadcast completed"*) return 0 ;;
+    esac
+    if [ -n "$out" ] && ! printf '%s' "$out" | grep -qi "security\|denied\|exception"; then
         return 0
     fi
     if run_am startservice -n com.mio/com.termux.app.TermuxService "$@" >/dev/null 2>&1; then
@@ -151,19 +163,49 @@ write_request() {
 }
 
 # Komutu çalıştır: $1 eylem, kalanı --es anahtar değer çiftleri
+# Önce yayın denenir; olmazsa istek dosyası yazılır ve uygulama servisi dosyayı görüp komutu
+# kendisi çalıştırır (am bazı cihazlarda kabuk kullanıcısına kapalı olabiliyor).
 send() {
     action="$1"
     shift
-    write_request "command=mio" "action=$action"
-    if ! send_command -a "$action" "$@"; then
-        printf 'mio: komut uygulamaya iletilemedi, Termux açık mı?\n' >&2
-        return 1
+
+    # --es mode up --es size 20 ... -> "mode up size 20" (uygulama istek dosyasından okur)
+    args=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --es|--ei|--ez|--el)
+                if [ $# -ge 3 ]; then
+                    args="$args${args:+ }$2 $3"
+                    shift 3
+                else
+                    shift
+                fi
+                ;;
+            *) shift ;;
+        esac
+    done
+
+    if [ -n "$args" ]; then
+        write_request "command=mio" "action=$action" "args=$args"
+    else
+        write_request "command=mio" "action=$action"
     fi
-    return 0
+
+    if send_command -a "$action" "$@"; then
+        return 0
+    fi
+
+    # Yayın/başlatma engellendi: istek dosyası kaldı, uygulama onu görüp çalıştıracak
+    if [ -f "$REQUEST_FILE" ]; then
+        printf 'mio: komut istek dosyasına yazıldı, uygulama görecek (%s)\n' "$REQUEST_FILE"
+        return 0
+    fi
+    printf 'mio: komut uygulamaya iletilemedi.\n' >&2
+    return 1
 }
 
 diagnose() {
-    printf 'mio sürüm: 5 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, paketler)\n'
+    printf 'mio sürüm: 6 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, paketler, istek dosyası)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
@@ -198,6 +240,23 @@ diagnose() {
     else
         printf '  pidof yok, kontrol edilemedi\n'
     fi
+
+    printf '\nEski veriler (com.termux): '
+    if [ -f /data/data/com.mio/files/.mio-migrated ]; then
+        printf 'taşındı\n'
+    elif [ -d /data/data/com.termux/files/home ]; then
+        printf 'TAŞINMADI - menü > Veriler > "Eski verileri taşı"\n'
+    else
+        printf 'yok\n'
+    fi
+
+    printf '\nİletişim yolu:\n'
+    if [ -x "$PREFIX/bin/termux-am" ]; then
+        printf '  termux-am: VAR\n'
+    else
+        printf '  termux-am: YOK (am yedeği kullanılacak, Android 10+ üzerinde genelde kapalıdır)\n'
+    fi
+    printf '  istek dosyası: %s\n' "$REQUEST_FILE"
 
     printf '\nMenü testi gönderiliyor...\n'
     if send "$ACTION_MENU"; then
