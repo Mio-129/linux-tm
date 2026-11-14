@@ -527,14 +527,46 @@ public final class MioBootstrap {
 
         try {
             String content = readText(file);
-            if (content == null || !content.contains(legacy)) return;
+            if (content == null) return;
+            // Bileşen adları: `com.termux/com.termux.app.TermuxService` gibi hedefler bu uygulamada
+            // yoktur ve sessizce kaybolur. Veri yolu ve paket adı birlikte çevrilir, çünkü
+            // `/data/data/com.termux` içindeki `com.termux` paket adıdır, sınıf yolu
+            // `com.termux.app...` ise kaynak koddaki adıyla kalır.
+            String patched = content
+                .replace("/data/data/" + legacyPackage(), "/data/data/" + currentPackage())
+                .replace(legacy, current)
+                .replace(legacyPackage() + "/" + legacyPackage() + ".app.", currentPackage() + "/com.termux.app.");
+            if (patched.equals(content)) return;
             try (FileOutputStream out = new FileOutputStream(file)) {
-                out.write(content.replace(legacy, current).getBytes("UTF-8"));
+                out.write(patched.getBytes("UTF-8"));
             }
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG,
                 "Failed to rewrite the prefix path of \"" + file.getAbsolutePath() + "\"", e);
         }
+    }
+
+
+    /**
+     * @return Returns the package name this fork was installed with, like {@code com.mio}, read from
+     * the data directory constant of {@link TermuxConstants}.
+     */
+    @NonNull
+    private static String currentPackage() {
+        String path = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
+        int index = path.lastIndexOf('/');
+        return index < 0 ? path : path.substring(index + 1);
+    }
+
+    /**
+     * @return Returns the package name of the upstream Termux app, which the command assets and the
+     * packages of the repositories use in the component names and the data directory.
+     */
+    @NonNull
+    private static String legacyPackage() {
+        String path = TermuxConstants.TERMUX_LEGACY_DATA_DIR_PATH;
+        int index = path.lastIndexOf('/');
+        return index < 0 ? path : path.substring(index + 1);
     }
 
     @Nullable

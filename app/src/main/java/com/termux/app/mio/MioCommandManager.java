@@ -243,12 +243,16 @@ public final class MioCommandManager {
         Intent intent = new Intent(action);
         String args = request.get(KEY_ARGS_FOR_INTENT);
         if (args != null) {
-            // `mode up`, `mode down`, `size 20`, ... are passed as --es mode up
+            // `mode up`, `mode down`, `size 20`, ... are passed as --es mode up. The `swset` and
+            // `so` commands write the same format, so their mode is not lost when the broadcast
+            // was blocked and the request file is used instead.
             String[] parts = args.trim().split("\\s+");
             for (int i = 0; i + 1 < parts.length; i += 2) {
                 intent.putExtra(parts[i], parts[i + 1]);
             }
         }
+        // The file based request has no Intent extras, so the name/audio of `so` and `swset` are
+        // taken from the request itself by the handlers below (setAudio/setWallpaper).
         return handleServiceIntent(intent);
     }
 

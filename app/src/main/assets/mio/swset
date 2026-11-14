@@ -30,6 +30,7 @@ ACTION_CLEAR="com.termux.mio.action.CLEAR_WALLPAPER"
 ACTION_STATUS="com.termux.mio.action.STATUS"
 ACTION_AUDIO_STREAM="com.termux.mio.action.AUDIO_STREAM"
 
+COMMAND_NAME="swset"
 REQUEST_DIR="$HOME/.termux/mio"
 REQUEST_FILE="$REQUEST_DIR/request"
 
@@ -58,21 +59,81 @@ EOF
 # Android 14+ (API 34) üzerinde `am broadcast` çalışmazsa, komut dinleyen servise
 # doğrudan startservice ile iletilir (uygulama zaten çalışıyorsa bu her zaman çalışır).
 run_am() {
+    # Önce sistem `am`: termux-am ikilisi `com.termux` paket kimliğiyle derlenmiş olduğundan
+    # yayınları/servis başlatmaları `com.termux` adına yapar ve bu uygulamaya ulaşamaz.
+    if [ -x /system/bin/am ] && /system/bin/am "$@" >/dev/null 2>&1; then
+        return 0
+    fi
     if [ -x "$PREFIX/bin/termux-am" ]; then
         "$PREFIX/bin/termux-am" "$@"
-    elif command -v termux-am >/dev/null 2>&1; then
-        termux-am "$@"
-    else
-        /system/bin/am "$@"
+        return $?
     fi
+    return 1
+}
+
+# İstek dosyasına eylem satırını ekle: yayın engellenirse uygulama komutu dosyadan çalıştırır.
+# `--es mode off` gibi anahtar/değer çiftleri `args=` satırına yazılır, böylece uygulama kip
+# bilgisini kaybetmez (ör. `so ses kapat` yanlışlıkla sesi açmaz).
+note_request_action() {
+    [ -n "${REQUEST_FILE:-}" ] || return 0
+    # Dosya yoksa (ör. `so ses +` istek yazmıyor) yine de oluştur: yayın engellenirse uygulama
+    # komutu bu dosyadan alır.
+    if [ ! -f "$REQUEST_FILE" ]; then
+        mkdir -p "$REQUEST_DIR" 2>/dev/null
+        {
+            printf 'created=%s\n' "$(date +%s 2>/dev/null || echo 0)"
+            printf 'command=%s\n' "${COMMAND_NAME:-mio}"
+        } > "$REQUEST_FILE" 2>/dev/null
+    fi
+    [ -f "$REQUEST_FILE" ] || return 0
+    action=""
+    args=""
+    key=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -a)
+                [ $# -ge 2 ] || break
+                action="$2"
+                shift 2
+                ;;
+            --es|--ei|--ez|--el)
+                [ $# -ge 2 ] || break
+                key="$2"
+                shift 2
+                ;;
+            *)
+                if [ -n "$key" ]; then
+                    args="$args${args:+ }$key $1"
+                    key=""
+                fi
+                shift
+                ;;
+        esac
+    done
+    if [ -n "$action" ] && ! grep -q "^action=" "$REQUEST_FILE" 2>/dev/null; then
+        printf 'action=%s\n' "$action" >> "$REQUEST_FILE" 2>/dev/null
+    fi
+    if [ -n "$args" ] && ! grep -q "^args=" "$REQUEST_FILE" 2>/dev/null; then
+        printf 'args=%s\n' "$args" >> "$REQUEST_FILE" 2>/dev/null
+    fi
+    return 0
 }
 
 send_command() {
+    note_request_action "$@"
     if run_am broadcast "$@" >/dev/null 2>&1; then
         return 0
     fi
-    # Yedek yol: servise startservice ile gönder
-    run_am startservice -n com.termux/com.termux.app.TermuxService "$@" >/dev/null 2>&1
+    # Yedek yol: servise startservice ile gönder. Bileşen adı com.mio olmalı; eski com.termux
+    # bileşeni bu uygulamada yok ve istek sessizce kaybolurdu.
+    if run_am startservice -n com.mio/com.termux.app.TermuxService "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Son çare: istek dosyası yazıldıysa uygulama onu 600 ms içinde okuyup komutu çalıştırır.
+    if [ -n "${REQUEST_FILE:-}" ] && [ -f "$REQUEST_FILE" ]; then
+        return 0
+    fi
+    return 1
 }
 
 # İstek dosyasını yaz: dosya yollarındaki boşluk gibi karakterlerin

@@ -577,7 +577,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=22" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=23" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -597,7 +597,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=22
+MIO_WRAPPER_VERSION=23
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -792,10 +792,132 @@ MIO_EOF
     printf 'mio: %s sarmalayıcısı kuruldu\n' "$name"
 }
 
+# dpkg sarmalayıcısı: depodaki paketler `com.termux` öneki için derlenmiş
+# (`./data/data/com.termux/files/usr/...` yolları ve maint script shebang'leri). Bu önek bu
+# uygulamada yok, dpkg `error creating directory './.data/data/com.termux': Permission denied`
+# veriyor. Sarmalayıcı, dpkg'ye verilen her .deb dosyasını `com.mio` yollarıyla yeniden paketler;
+# böylece dpkg chroot/instdir hilesine ihtiyaç duymadan doğrudan gerçek yollara kurar.
+install_dpkg_wrapper() {
+    [ -d "$PREFIX/bin" ] || return 0
+    real="$PREFIX/bin/dpkg.mio-real"
+    wrapper="$PREFIX/bin/dpkg"
+    [ -f "$wrapper" ] || [ -f "$real" ] || return 0
+
+    # Sarmalayıcı zaten güncelse dokunma
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=2" "$wrapper" 2>/dev/null; then
+        return 0
+    fi
+
+    if [ ! -f "$real" ]; then
+        # Elimizde sarmalayıcı olmayan gerçek dpkg var mı?
+        if grep -q "MIO_DPKG_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
+            return 0
+        fi
+        cp "$wrapper" "$real" 2>/dev/null || return 1
+        chmod 755 "$real" 2>/dev/null
+    fi
+    [ -x "$real" ] || return 1
+
+    cat > "$wrapper" <<'MIO_EOF'
+#!@@PREFIX@@/bin/sh
+# mio dpkg sarmalayıcısı: com.termux yollu .deb dosyalarını com.mio için yeniden paketler
+MIO_DPKG_WRAPPER_VERSION=2
+bin=$(dirname "$0")
+prefix=$(dirname "$bin")
+real="$bin/dpkg.mio-real"
+ddpkg="$bin/dpkg-deb"
+[ -x "$ddpkg" ] || ddpkg=dpkg-deb
+
+# Paketi yerinde com.mio yollarına çevir. Hata olursa sessizce devam edilir (gerçek dpkg yine çalışır).
+convert_deb() {
+    deb="$1"
+    [ -f "$deb" ] || return 0
+    case "$deb" in
+        *.deb) : ;;
+        *) return 0 ;;
+    esac
+    # Zaten com.mio yollarıyla paketlenmişse hiç dokunma (hızlı yol)
+    if ! "$ddpkg" -c "$deb" 2>/dev/null | grep -q 'com\.termux'; then
+        return 0
+    fi
+
+    work="$prefix/tmp/mio-deb-$$"
+    rm -rf "$work" 2>/dev/null
+    mkdir -p "$prefix/tmp" "$work/root" 2>/dev/null || return 0
+    if ! "$ddpkg" -R "$deb" "$work/root" >/dev/null 2>&1; then
+        rm -rf "$work" 2>/dev/null
+        return 0
+    fi
+    root="$work/root"
+
+    # 1) com.termux ağacını com.mio ağacına taşı
+    legacy="$root/data/data/com.termux"
+    target="$root/data/data/com.mio"
+    if [ -d "$legacy" ]; then
+        mkdir -p "$target" 2>/dev/null
+        cp -a "$legacy/." "$target/" 2>/dev/null
+        rm -rf "$legacy" 2>/dev/null
+    fi
+
+    # 2) symlink hedeflerini çevir
+    find "$root" -type l 2>/dev/null | while IFS= read -r link; do
+        lt=$(readlink "$link" 2>/dev/null) || continue
+        case "$lt" in
+            *com.termux*)
+                ln -sfn "$(printf '%s' "$lt" | sed 's|/data/data/com\.termux|/data/data/com.mio|g')" "$link" 2>/dev/null
+                ;;
+        esac
+    done
+
+    # 3) dosya içeriklerini çevir (maint script shebang'leri, conffiles, betikler)
+    #    ELF dosyalarında yol, sabit uzunlukta olduğu için `/data/data/com.mio///` ile doldurulur;
+    #    aksi halde ikili dosyanın boyutu/offsetleri kayar ve çalışmaz.
+    find "$root" -type f 2>/dev/null | while IFS= read -r f; do
+        grep -qa 'com\.termux' "$f" 2>/dev/null || continue
+        if [ "$(head -c 4 "$f" 2>/dev/null)" = "ELF" ]; then
+            sed -i 's|/data/data/com\.termux|/data/data/com.mio///|g' "$f" 2>/dev/null
+        else
+            sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$f" 2>/dev/null
+        fi
+        chmod 755 "$f" 2>/dev/null
+    done
+
+    # 4) yeniden paketle ve yerine koy
+    if "$ddpkg" -b "$root" "$work/new.deb" >/dev/null 2>&1 && [ -s "$work/new.deb" ]; then
+        cat "$work/new.deb" > "$deb" 2>/dev/null || cp "$work/new.deb" "$deb" 2>/dev/null
+        printf 'mio: paket com.mio yollarına çevrildi: %s\n' "$(basename "$deb")" >&2
+    else
+        printf 'mio: paket çevrilemedi (yollar com.termux kalabilir): %s\n' "$(basename "$deb")" >&2
+    fi
+    rm -rf "$work" 2>/dev/null
+    return 0
+}
+
+for a in "$@"; do
+    case "$a" in
+        *.deb) convert_deb "$a" ;;
+    esac
+done
+
+# dpkg yardımcı programlarını (ldconfig, start-stop-daemon, sh, tar, ...) önekte arar; eksikse
+# "N expected programs not found in PATH" deyip unpack etmeden durur.
+case ":$PATH:" in
+    *":$prefix/bin:"*) : ;;
+    *) PATH="$prefix/bin:$PATH" ; export PATH ;;
+esac
+
+exec "$real" "$@"
+MIO_EOF
+    sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
+    chmod 755 "$wrapper" 2>/dev/null
+    printf 'mio: dpkg sarmalayıcısı kuruldu\n'
+}
+
 install_apt_wrappers() {
     install_apt_wrapper pkg
     install_apt_wrapper apt
     install_apt_wrapper apt-get
+    install_dpkg_wrapper
     return 0
 }
 
@@ -891,14 +1013,16 @@ fix_sources() {
 }
 
 run_am() {
+    # Önce sistem `am`: termux-am ikilisi `com.termux` paket kimliğiyle derlendiği için yayınları
+    # `com.termux` adına yapar ve bu uygulamaya (com.mio) ulaştıramaz.
+    if [ -x /system/bin/am ]; then
+        /system/bin/am "$@" >/dev/null 2>&1 && return 0
+    fi
     if [ -x "$PREFIX/bin/termux-am" ]; then
         "$PREFIX/bin/termux-am" "$@" 2>/dev/null && return 0
     fi
     if command -v termux-am >/dev/null 2>&1; then
         termux-am "$@" 2>/dev/null && return 0
-    fi
-    if [ -x /system/bin/am ]; then
-        /system/bin/am "$@" >/dev/null 2>&1 && return 0
     fi
     return 1
 }
@@ -979,7 +1103,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 26 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v22, hız testli depo, geçersiz depo satırı temizliği)\n'
+    printf 'mio sürüm: 27 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v23, hız testli depo, dpkg deb dönüştürücü)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1665,6 +1789,12 @@ case "$COMMAND" in
                 printf '  %s: YOK (%s.mio-real da yok)\n' "$n" "$n"
             fi
         done
+        # dpkg sarmalayıcısı: deb içindeki com.termux yollarını com.mio ya çevirir (unpack hatası)
+        if [ -x "$PREFIX/bin/dpkg" ] && grep -q "MIO_DPKG_WRAPPER_VERSION" "$PREFIX/bin/dpkg" 2>/dev/null; then
+            printf '  dpkg: sarmalayıcı hazır (com.termux yolları com.mio ya çevrilir)\n'
+        elif [ -x "$PREFIX/bin/dpkg" ]; then
+            printf '  dpkg: sarmalayıcı YOK, com.termux yolu olan paketler kurulamaz\n'
+        fi
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
         printf '\n=== test ===\n'
@@ -1707,6 +1837,56 @@ case "$COMMAND" in
         # 8) en hızlı depoyu seç (indirme yavaşlığının asıl sebebi rastgele ayna seçimiydi)
         printf '\n'
         mirror_pick_fast
+
+        # 7b) GERÇEK kurulum provası (ağa çıkmadan): depodaki paketler com.termux önekiyle
+        #     derlendiği için dpkg "error creating directory './.data/data/com.termux': Permission
+        #     denied" veriyordu. Prova, com.termux yollu küçük bir deb dosyasını gerçek köke kurar:
+        #     dpkg sarmalayıcısı çalışıyorsa yol com.mio ya çevrilir ve kurulum başarılı olur.
+        #     Dönüştürme olmazsa dpkg tam olarak cihazdaki hatayı verir.
+        printf 'paket kurma provası: '
+        probe_dir="$PREFIX/tmp/mio-probe"
+        probe_admin="$probe_dir/admin"
+        probe_marker="$PREFIX/share/mio-probe"
+        probe_ok=0
+        probe_ran=0
+        probe_done=0
+        # dpkg yardımcı programları PATH içinde olmalı; eksikse dpkg "N expected programs not
+        # found in PATH" deyip unpack etmeden durur.
+        PATH="$PREFIX/bin:$PATH" ; export PATH
+        rm -rf "$probe_dir" "$probe_marker" 2>/dev/null
+        if [ -x "$PREFIX/bin/dpkg" ] && [ -x "$PREFIX/bin/dpkg-deb" ]; then
+            probe_ran=1
+            mkdir -p "$probe_dir/root/DEBIAN" "$probe_dir/root/data/data/com.termux/files/usr/share/mio-probe" "$probe_admin/info" "$probe_admin/updates" 2>/dev/null
+            printf 'Package: mio-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: mio <mio@local>\nDescription: mio install probe\n' \
+                > "$probe_dir/root/DEBIAN/control" 2>/dev/null
+            printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/mio-probe/probe" 2>/dev/null
+            : > "$probe_admin/status"
+            : > "$probe_admin/available"
+            if "$PREFIX/bin/dpkg-deb" -b "$probe_dir/root" "$probe_dir/probe.deb" >/dev/null 2>&1; then
+                probe_done=1
+                "$PREFIX/bin/dpkg" --admindir="$probe_admin" --instdir=/ \
+                    --force-not-root --force-script-chrootless --force-depends \
+                    --unpack "$probe_dir/probe.deb" >"$probe_dir/log" 2>&1 && probe_ok=1
+                # Kurulan dosya gerçekten com.mio önekinde mi?
+                if [ -f "$probe_marker/probe" ]; then
+                    probe_ok=1
+                elif [ "$probe_ok" -eq 1 ]; then
+                    probe_ok=2
+                fi
+            fi
+        fi
+        if [ "$probe_ok" -eq 1 ]; then
+            printf 'tamam (depodaki paketler com.mio yollarına çevrilerek kuruluyor)\n'
+        elif [ "$probe_ok" -eq 2 ]; then
+            printf 'BAŞARISIZ (kurulum oldu ama dosya com.mio önekinde değil)\n'
+        elif [ "$probe_ran" -eq 0 ]; then
+            printf 'ATLANDI (dpkg-deb ya da dpkg yok)\n'
+        elif [ "$probe_done" -eq 0 ]; then
+            printf 'ATLANDI (prova paketi oluşturulamadı)\n'
+        else
+            printf 'BAŞARISIZ (ayrıntı: %s)\n' "$(grep -m1 -i "error\|denied" "$probe_dir/log" 2>/dev/null)"
+        fi
+        rm -rf "$probe_dir" "$probe_marker" 2>/dev/null
 
         printf '\nSONUÇ: '
         if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
