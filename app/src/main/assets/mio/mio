@@ -842,7 +842,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 21 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17, 'mio apt-fix': tek komutta onarım + test)\n'
+    printf 'mio sürüm: 21 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
