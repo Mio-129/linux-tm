@@ -577,7 +577,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=24" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=25" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -597,7 +597,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=24
+MIO_WRAPPER_VERSION=25
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -922,11 +922,30 @@ mio_convert_deb() {
     fi
     _root="$_work/root"
 
-    # 1) com.termux ağacını com.mio'ya taşı
-    if [ -d "$_root/data/data/com.termux" ]; then
-        mkdir -p "$_root/data/data/com.mio" 2>/dev/null
-        cp -a "$_root/data/data/com.termux/." "$_root/data/data/com.mio/" 2>/dev/null
-        rm -rf "$_root/data/data/com.termux" 2>/dev/null
+    # 1) com.termux ağacını com.mio'ya taşı.
+    #    `dpkg-deb -R` çıkarılan dosyaları salt-okunur yapar; `rm -rf` o zaman başarısız olur ve
+    #    ağaç yerinde kalır (cihazda "12 yolda com.termux kaldı" hatası buydu). Bu yüzden önce
+    #    yazma izni verilir, sonra `mv` (rename) denenir; mv aynı dosya sisteminde izin istemez.
+    _legacy="$_root/data/data/com.termux"
+    _target="$_root/data/data/com.mio"
+    if [ -d "$_legacy" ]; then
+        chmod -R u+rwX "$_legacy" 2>/dev/null
+        if [ -d "$_target" ]; then
+            # iki ağaç birleşecek: içeriği kopyala, sonra eski ağacı sil
+            cp -a "$_legacy/." "$_target/" 2>/dev/null
+            rm -rf "$_legacy" 2>/dev/null
+        else
+            mv "$_legacy" "$_target" 2>/dev/null
+        fi
+        if [ -e "$_legacy" ]; then
+            chmod -R u+rwX "$_legacy" 2>/dev/null
+            rm -rf "$_legacy" 2>/dev/null
+        fi
+    fi
+    if [ -e "$_legacy" ]; then
+        printf 'mio: eski önek ağacı silinemedi: %s\n' "$(basename "$_deb")" >&2
+        rm -rf "$_work" 2>/dev/null
+        return 1
     fi
 
     # 2a) symlink hedefleri
@@ -957,9 +976,21 @@ mio_convert_deb() {
         return 1
     fi
 
-    # 3b) yeni pakette com.termux kaldı mı? (kalmazsa yazmanın anlamı yok)
+    # 3b) yeni pakette com.termux kaldı mı? İki bağımsız kontrol yapılır:
+    #     - paket listesinde (yol adlarında)
+    #     - açılan ağaçtaki dosya içeriklerinde (maint script shebang'i, conffiles, ELF yolu)
     _left=$("$_ddpkg" -c "$_work/new.deb" 2>/dev/null | grep -c 'com\.termux')
     [ -n "$_left" ] || _left=0
+    if [ "$_left" -eq 0 ]; then
+        # içerikte kalan var mı? (salt dosya adları temiz olsa da shebang eski kalabilir)
+        _inner=$(grep -rl 'com\.termux' "$_root" 2>/dev/null | wc -l | tr -d ' ')
+        [ -n "$_inner" ] || _inner=0
+        if [ "$_inner" -gt 0 ]; then
+            printf 'mio: paket içinde com.termux kaldı (%s dosya)\n' "$_inner" >&2
+            rm -rf "$_work" 2>/dev/null
+            return 1
+        fi
+    fi
     if [ "$_left" -gt 0 ]; then
         printf 'mio: paket çevrilemedi (%s yolda com.termux kaldı): %s\n' "$_left" "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
@@ -987,7 +1018,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=4" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=5" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1004,7 +1035,7 @@ install_dpkg_wrapper() {
 #!@@PREFIX@@/bin/sh
 # mio dpkg sarmalayıcısı: com.termux yollu .deb dosyalarını com.mio için yeniden paketler.
 # Dönüştürme mantığı bu dosyada kopya tutulmaz; `mio` betiğine devredilir (tek kaynak).
-MIO_DPKG_WRAPPER_VERSION=4
+MIO_DPKG_WRAPPER_VERSION=5
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
 real="$bin/dpkg.mio-real"
@@ -1224,7 +1255,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 28 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v24, hız testli depo, ar/tar yedekli deb dönüştürücü)\n'
+    printf 'mio sürüm: 29 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v25, hız testli depo, salt-okunur deb ağacı düzeltmesi)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1977,6 +2008,9 @@ case "$COMMAND" in
         printf 'Package: mio-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: mio <mio@local>\nDescription: mio install probe\n' \
             > "$probe_dir/root/DEBIAN/control" 2>/dev/null
         printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/mio-probe/probe" 2>/dev/null
+        # Salt-okunur dosyalar: `dpkg-deb -R` paketlenen izinleri geri verir ve eski ağacın
+        # silinmesi bu yüzden başarısız olabiliyordu. Prova bunu da kapsasın.
+        chmod -R a-w "$probe_dir/root/data/data/com.termux" 2>/dev/null
         : > "$probe_admin/status"
         : > "$probe_admin/available"
 
