@@ -420,6 +420,12 @@ USTC (Çin)|https://mirrors.ustc.edu.cn/termux/apt/termux-main
 
 write_sources() {
     url="$1"
+    # Geçersiz adres sources.list'e yazılırsa apt "Malformed entry ... (URI parse)" der ve
+    # hiçbir komut çalışmaz; bu yüzden burada reddedilir.
+    case "$url" in
+        http://*|https://*) : ;;
+        *) printf 'mio: geçersiz depo adresi reddedildi: %s\n' "$url" >&2; return 1 ;;
+    esac
     apt_dir="$PREFIX/etc/apt"
     mkdir -p "$apt_dir" 2>/dev/null
     tmp="$apt_dir/.sources.list.mio-new"
@@ -472,10 +478,13 @@ mirror_pick_fast() {
     fi
     printf 'Depolar deneniyor (en fazla 2 sn/depo):\n'
     best_url="" ; best_time=""
-    for entry in $MIRRORS_FAST; do
-        url=${entry#*|}
-        label=${entry%%|*}
-        t=$("$PREFIX/bin/curl" -s -o /dev/null --max-time 2 -w '%{time_total}' \
+    # NOT: `for entry in $VAR` etiketlerdeki boşluk yüzünden kelimelere bölünüyordu ve
+    # "Termux" gibi geçersiz bir adres sources.list'e yazılıyordu. Heredoc + while
+    # kullanıldığında döngü alt kabukta çalışmaz, değişkenler korunur.
+    while IFS='|' read -r label url; do
+        [ -n "$label" ] || continue
+        case "$url" in http*) : ;; *) continue ;; esac
+        t=$("$PREFIX/bin/curl" -fsS -o /dev/null --max-time 2 -w '%{time_total}' \
                 "$url/dists/stable/InRelease" 2>/dev/null)
         case "$t" in
             ''|*[!0-9.]*) printf '  %-12s erişilemedi\n' "$label" ; continue ;;
@@ -484,7 +493,9 @@ mirror_pick_fast() {
         if [ -z "$best_time" ] || [ "$(awk -v a="$t" -v b="$best_time" 'BEGIN{print (a<b)?1:0}')" = "1" ]; then
             best_time="$t" ; best_url="$url"
         fi
-    done
+    done <<MIO_MIRRORS
+$MIRRORS_FAST
+MIO_MIRRORS
     if [ -n "$best_url" ] && write_sources "$best_url"; then
         printf 'En hızlı depo: %s (%s sn)\n' "$best_url" "$best_time"
         return 0
@@ -566,7 +577,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=19" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=22" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -586,7 +597,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=19
+MIO_WRAPPER_VERSION=22
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -636,6 +647,26 @@ fi
 
 # 3) aynı depoyu tekrar eden dosyaları kaldır ("configured multiple times" uyarısı biter)
 rm -f "$parts/mio.list" "$parts/main.list" 2>/dev/null
+
+# 3b) geçersiz depo satırı (ör. "deb Termux stable main") apt'yi kilitler:
+#     "Malformed entry ... (URI parse)" -> "The list of sources could not be read."
+#     Böyle bir satır varsa depo dosyasını mio'nun onarıcısına devret.
+if grep -q '^deb ' "$sources" 2>/dev/null; then
+    if grep '^deb ' "$sources" 2>/dev/null | awk '{print $2}' | grep -qv '^https\?://'; then
+        # doğrudan burada temizle (harici bir araca bağımlı kalmadan)
+        tmp="$sources.mio-tmp"
+        grep '^deb ' "$sources" 2>/dev/null | awk '$2 ~ /^https?:\/\// { print }' > "$tmp" 2>/dev/null
+        if [ -s "$tmp" ]; then
+            mv "$tmp" "$sources" 2>/dev/null
+            chmod 644 "$sources" 2>/dev/null
+        else
+            rm -f "$tmp" 2>/dev/null
+            printf '# mio tarafından yazıldı\ndeb https://packages-cf.termux.dev/apt/termux-main stable main\n' > "$sources" 2>/dev/null
+            chmod 644 "$sources" 2>/dev/null
+        fi
+        printf 'mio: geçersiz depo satırı temizlendi\n' >&2
+    fi
+fi
 
 # 4) yolları apt.conf.d içinde de sabitle (bazı apt çağrıları dosyayı okumadan geçebiliyor)
 conf="$conf_dir/zz-mio-sources.conf"
@@ -791,6 +822,29 @@ fix_sources() {
         broken=1
     fi
 
+    # Geçersiz satır (ör. "deb Termux stable main") apt'yi tamamen kilitler:
+    # "Malformed entry ... (URI parse)" -> "The list of sources could not be read."
+    # Adresi http(s) ile başlamayan tüm deb satırları atılır.
+    if [ "$broken" -eq 0 ] && [ -f "$sources" ]; then
+        bad=0
+        while IFS= read -r line; do
+            case "$line" in
+                deb[[:space:]]*)
+                    # "deb https://... stable main" -> adres 2. alan
+                    addr=$(printf '%s\n' "$line" | awk '{print $2}')
+                    case "$addr" in
+                        http://*|https://*) : ;;
+                        *) bad=$((bad + 1)) ;;
+                    esac
+                    ;;
+            esac
+        done < "$sources"
+        if [ "$bad" -gt 0 ]; then
+            printf 'mio: sources.list içinde %s geçersiz satır bulundu\n' "$bad"
+            broken=1
+        fi
+    fi
+
     if [ "$broken" -eq 1 ]; then
         printf 'mio: bozuk sources.list onarılıyor...\n'
         found=""
@@ -925,7 +979,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 25 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v19, hız testli depo, dpkg dosya listesi onarımı)\n'
+    printf 'mio sürüm: 26 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v22, hız testli depo, geçersiz depo satırı temizliği)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)

@@ -60,6 +60,7 @@ public final class MioBootstrap {
         // A broken `sources.list` (a directory instead of a file) makes `pkg` fail with
         // "Read error - read (21: Is a directory)", so it is repaired before anything is installed
         repairAptSources();
+        sanitizeSourcesFile();
         repairAptMethods();
         repairAptState();
         repairAptConfigFile();
@@ -186,6 +187,7 @@ public final class MioBootstrap {
                     }
                 }
             }
+            if (content != null) content = sanitizeSources(content);
             if (content == null || content.trim().isEmpty()) {
                 content = "deb https://packages-cf.termux.dev/apt/termux-main stable main\n";
             }
@@ -283,6 +285,50 @@ public final class MioBootstrap {
     }
 
 
+
+    /**
+     * Drop the `deb` lines whose URI is not http(s).
+     *
+     * A single bad line (for example `deb Termux stable main`) makes apt fail with
+     * "Malformed entry ... (URI parse)" and then "The list of sources could not be read.", so no
+     * command works at all. The valid lines are kept; if none are left {@code null} is returned and
+     * the caller writes the default mirror.
+     */
+    private static String sanitizeSources(String content) {
+        StringBuilder builder = new StringBuilder();
+        for (String line : content.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("deb ")) {
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length < 2 || !(parts[1].startsWith("http://") || parts[1].startsWith("https://"))) {
+                    continue;
+                }
+            }
+            builder.append(line).append("\n");
+        }
+        return builder.toString().trim().isEmpty() ? null : builder.toString();
+    }
+
+    /**
+     * Remove the invalid `deb` lines from an otherwise healthy `sources.list`.
+     *
+     * A line like `deb Termux stable main` (written by an older mirror picker) makes every apt
+     * command fail with "Malformed entry ... (URI parse)". The file is only rewritten when
+     * something actually has to be dropped.
+     *
+     * @return {@code true} if the file was repaired.
+     */
+    public static boolean sanitizeSourcesFile() {
+        File sourcesList = new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "apt/sources.list");
+        if (!sourcesList.isFile()) return false;
+        String current = readText(sourcesList);
+        if (current == null || current.trim().isEmpty()) return false;
+        String sanitized = sanitizeSources(current);
+        if (sanitized == null) return false;
+        if (sanitized.equals(current)) return false;
+        Logger.logInfo(LOG_TAG, "Dropping the invalid entries of \"" + sourcesList.getAbsolutePath() + "\"");
+        return writeText(sourcesList, sanitized);
+    }
 
     /**
      * apt needs its working directories (`var/lib/apt/lists/partial`, `var/cache/apt/archives/partial`,
