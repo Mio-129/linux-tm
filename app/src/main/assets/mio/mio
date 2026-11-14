@@ -27,7 +27,12 @@
 #   * Ekran görüntüsü/medya komutları için: swset <dosya>, swset off, so, so off.
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.mio/files/usr
+    # Betiğin yeri: $PREFIX/bin/mio -> PREFIX iki üst dizin
+    mio_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
+    case "$mio_dir" in
+        */bin) PREFIX=$(dirname "$mio_dir") ;;
+        *)     PREFIX=/data/data/com.mio/files/usr ;;
+    esac
 fi
 
 ACTION_MENU="com.termux.mio.action.MENU"
@@ -78,22 +83,90 @@ EOF
 # apt depoları: sources.list bir dosya olmalı. Bozuk kurulumlarda klasör olarak kalabiliyor
 # ("E: Read error - read (21: Is a directory)"), bu yüzden pkg'den önce onarılır.
 # ---------------------------------------------------------------------------------------------
+# apt depoları onarımı
+#
+# `sources.list` bir DOSYA olmalı. Bozuk kurulumlarda klasör, symlink veya başka bir şey olarak
+# kalabiliyor ve apt "E: Read error - read (21: Is a directory)" veriyor. `termux-change-repo`
+# bazen bu bozuk girdiyi kendisi oluşturduğu için pkg'den hemen önce tekrar onarılır.
+# ---------------------------------------------------------------------------------------------
+
+# $PREFIX/bin/pkg sarmalayıcısı: her pkg çağrısından önce depoyu onarır
+install_pkg_wrapper() {
+    real="$PREFIX/bin/pkg.mio-real"
+    wrapper="$PREFIX/bin/pkg"
+    [ -d "$PREFIX/bin" ] || return 0
+
+    # Gerçek pkg'yi bir kez sakla (sarmalayıcı kendini çağırmasın)
+    if [ -f "$wrapper" ] && [ ! -f "$real" ]; then
+        if grep -q "mio pkg sarmalay" "$wrapper" 2>/dev/null; then
+            return 0
+        fi
+        cp "$wrapper" "$real" 2>/dev/null || return 0
+        chmod 755 "$real" 2>/dev/null
+    fi
+    [ -x "$real" ] || return 0
+
+    # Sarmalayıcı kendi konumundan çalışır (PREFIX'e ihtiyaç duymaz) ve onarımı kendi yapar
+    cat > "$wrapper" <<'MIO_EOF'
+#!/data/data/com.mio/files/usr/bin/sh
+# mio pkg sarmalay: sources.list dosya değilse yeniden yazar, sonra gerçek pkg'yi çalıştırır
+bin=$(dirname "$0")
+prefix=$(dirname "$bin")
+sources="$prefix/etc/apt/sources.list"
+if [ -L "$sources" ] || { [ -e "$sources" ] && [ ! -f "$sources" ]; }; then
+    tmp="$prefix/etc/apt/sources.list.mio-tmp"
+    found=""
+    if [ -d "$sources" ]; then
+        for candidate in "$sources"/*; do
+            [ -f "$candidate" ] || continue
+            found="$candidate"
+            break
+        done
+    fi
+    rm -f "$tmp" 2>/dev/null
+    if [ -n "$found" ]; then cp "$found" "$tmp" 2>/dev/null; fi
+    [ -s "$tmp" ] || printf 'deb https://packages-cf.termux.dev/apt/termux-main stable main\n' > "$tmp"
+    rm -rf "$sources" 2>/dev/null
+    mv "$tmp" "$sources" 2>/dev/null
+    chmod 644 "$sources" 2>/dev/null
+    printf 'mio: bozuk sources.list onarıldı\n' >&2
+fi
+exec "$bin/pkg.mio-real" "$@"
+MIO_EOF
+    chmod 755 "$wrapper" 2>/dev/null
+    printf 'mio: pkg sarmalayıcısı kuruldu (%s)\n' "$wrapper"
+}
+
 fix_sources() {
     apt_dir="$PREFIX/etc/apt"
     sources="$apt_dir/sources.list"
     [ -d "$apt_dir" ] || return 0
 
-    if [ -d "$sources" ] && [ ! -L "$sources" ]; then
-        printf 'mio: bozuk sources.list (klasör) onarılıyor...\n'
-        # İçinde gerçek bir liste varsa onu kullan, yoksa varsayılan depoyu yaz
+    # Ne olduğu önemli değil: dosya değilse (klasör, symlink, fifo...) ya da okunamıyorsa yeniden yaz
+    broken=0
+    if [ -L "$sources" ]; then
+        broken=1
+    elif [ -e "$sources" ] && [ ! -f "$sources" ]; then
+        broken=1
+    elif [ -f "$sources" ] && [ ! -r "$sources" ]; then
+        broken=1
+    elif [ ! -e "$sources" ]; then
+        broken=1
+    fi
+
+    if [ "$broken" -eq 1 ]; then
+        printf 'mio: bozuk sources.list onarılıyor...\n'
         found=""
-        for candidate in "$sources"/*; do
-            [ -f "$candidate" ] || continue
-            case "$candidate" in
-                *sources.list*) found="$candidate"; break ;;
-            esac
-        done
+        if [ -d "$sources" ]; then
+            for candidate in "$sources"/*; do
+                [ -f "$candidate" ] || continue
+                case "$candidate" in
+                    *sources.list*) found="$candidate"; break ;;
+                esac
+            done
+        fi
         tmp="$apt_dir/sources.list.mio-tmp"
+        rm -f "$tmp" 2>/dev/null
         if [ -n "$found" ]; then
             cp "$found" "$tmp" 2>/dev/null
         fi
@@ -107,22 +180,20 @@ fix_sources() {
         sed 's/^/  /' "$sources" 2>/dev/null
     fi
 
-    # sources.list.d içinde dosya olmayan girdiler de apt'yi bozar
+    # sources.list.d içinde dosya olmayan girdiler apt'yi bozar
     if [ -d "$apt_dir/sources.list.d" ]; then
         for entry in "$apt_dir/sources.list.d"/*; do
             [ -e "$entry" ] || continue
-            if [ -d "$entry" ] && [ ! -L "$entry" ]; then
+            if [ -L "$entry" ] || { [ -d "$entry" ]; }; then
                 printf 'mio: bozuk depo girdisi siliniyor: %s\n' "$entry"
                 rm -rf "$entry" 2>/dev/null
             fi
         done
     fi
+
+    install_pkg_wrapper
     return 0
 }
-
-# Niyet gönder: termux-am soketi -> termux-am -> /system/bin/am
-# `termux-am` olmadan `am` komutu Android 10+ üzerinde kabuk kullanıcısına kapalıdır
-# ("SecurityException"), o yüzden önce soket denenir.
 
 run_am() {
     if [ -x "$PREFIX/bin/termux-am" ]; then
@@ -794,7 +865,12 @@ case "$COMMAND" in
         ;;
     depo|repo|sources|duzelt|fix)
         fix_sources
+        if [ -L "$PREFIX/etc/apt/sources.list" ] || { [ -e "$PREFIX/etc/apt/sources.list" ] && [ ! -f "$PREFIX/etc/apt/sources.list" ]; }; then
+            printf 'Depo dosyası HÂLÂ BOZUK: %s\n' "$PREFIX/etc/apt/sources.list" >&2
+            exit 1
+        fi
         printf 'Depo dosyası: %s\n' "$PREFIX/etc/apt/sources.list"
+        sed 's/^/  /' "$PREFIX/etc/apt/sources.list" 2>/dev/null
         exit $?
         ;;
     menu|menü|terminal-menu|tmenu)

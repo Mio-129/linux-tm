@@ -167,8 +167,10 @@ public final class MioBootstrap {
         boolean repaired = false;
 
         File sourcesList = new File(aptDir, "sources.list");
-        if (sourcesList.isDirectory()) {
-            Logger.logInfo(LOG_TAG, "Repairing \"" + sourcesList.getAbsolutePath() + "\", which is a directory");
+        // A symlink, a directory or any other non regular file breaks apt ("Is a directory")
+        boolean broken = !sourcesList.isFile();
+        if (broken) {
+            Logger.logInfo(LOG_TAG, "Repairing \"" + sourcesList.getAbsolutePath() + "\", which is not a regular file");
 
             String content = null;
             File[] children = sourcesList.listFiles();
