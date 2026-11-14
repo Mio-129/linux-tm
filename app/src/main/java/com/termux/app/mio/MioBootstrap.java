@@ -60,6 +60,7 @@ public final class MioBootstrap {
         // A broken `sources.list` (a directory instead of a file) makes `pkg` fail with
         // "Read error - read (21: Is a directory)", so it is repaired before anything is installed
         repairAptSources();
+        repairAptMethods();
 
         File binDir = TermuxConstants.TERMUX_BIN_PREFIX_DIR;
         if (!binDir.isDirectory()) {
@@ -276,6 +277,34 @@ public final class MioBootstrap {
             if (writeText(aptConf, conf)) repaired = true;
         }
 
+        return repaired;
+    }
+
+
+    /**
+     * Make the apt download methods (`lib/apt/methods/http`, `https`, ...) executable.
+     *
+     * The bootstrap archives store them as `0700` files, but a package upgrade (or a prefix that was
+     * extracted with an older patch) can leave them without the executable bit. apt then fails with
+     * "Failed to exec method .../lib/apt/methods/https" and no repository can be read, which shows up
+     * as the misleading "The list of sources could not be read" error.
+     */
+    public static boolean repairAptMethods() {
+        final File methodsDir = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH, "apt/methods");
+        if (!methodsDir.isDirectory()) return false;
+
+        boolean repaired = false;
+        File[] methods = methodsDir.listFiles();
+        if (methods == null) return false;
+
+        for (File method : methods) {
+            if (!method.isFile()) continue;
+            if (method.canExecute()) continue;
+            if (method.setExecutable(true, false)) {
+                repaired = true;
+                Logger.logInfo(LOG_TAG, "Made the apt method \"" + method.getAbsolutePath() + "\" executable");
+            }
+        }
         return repaired;
     }
 

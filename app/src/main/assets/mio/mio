@@ -137,6 +137,15 @@ ensure_apt_config() {
         done
     fi
 
+    # 3c) apt indirme yöntemleri çalıştırılabilir olmalı, yoksa "Failed to exec method ... https"
+    methods="$PREFIX/lib/apt/methods"
+    if [ -d "$methods" ]; then
+        for m in "$methods"/*; do
+            [ -f "$m" ] || continue
+            [ -x "$m" ] || chmod 755 "$m" 2>/dev/null
+        done
+    fi
+
     # 4) yolları sabitle (bu dosya apt tarafından her zaman okunur, atomik yazılır)
     conf="$conf_dir/zz-mio-sources.conf"
     {
@@ -234,9 +243,26 @@ sources_report() {
         apt_bin="$candidate"
         break
     done
-    printf '\napt kaynak yapılandırması:\n'
+    printf '\napt methods (lib/apt/methods): '
+    if [ -d "$PREFIX/lib/apt/methods" ]; then
+        broken_m=""
+        for m in "$PREFIX/lib/apt/methods"/*; do
+            [ -f "$m" ] || continue
+            [ -x "$m" ] || broken_m="$broken_m $(basename "$m")"
+        done
+        if [ -n "$broken_m" ]; then
+            printf 'ÇALIŞTIRILAMIYOR:%s\n' "$broken_m"
+        else
+            printf 'tamam\n'
+        fi
+        ls -l "$PREFIX/lib/apt/methods" 2>/dev/null | sed 's/^/  /'
+    else
+        printf 'klasör YOK\n'
+    fi
+
+    printf '\napt kaynak yapılandırması (apt-config dump):\n'
     if [ -n "$apt_bin" ]; then
-        cfg_out=$("$apt_bin" config dump 2>/dev/null | grep -i "^Dir::Etc::source")
+        cfg_out=$(apt-config dump 2>/dev/null | grep -i "^Dir::Etc::source")
         if [ -n "$cfg_out" ]; then
             printf '%s\n' "$cfg_out" | sed 's/^/  /'
         else
@@ -402,7 +428,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=10" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=11" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -422,7 +448,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=10
+MIO_WRAPPER_VERSION=11
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -485,8 +511,38 @@ conf="$conf_dir/zz-mio-sources.conf"
     printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
 } > "$conf" 2>/dev/null
 
-# 5) Yolları ayrıca komut satırından dayat: `apt.conf.d` içindeki bozuk bir dosya ya da apt'nin
-#    kendi varsayılanı ne olursa olsun, `-o` en son okunan ve kazanan değerdir.
+# 5) apt'nin indirme yöntemleri (lib/apt/methods/http, https) çalıştırılabilir olmalı; aksi halde
+#    apt "Failed to exec method ..." verir ve hiçbir depo okunamaz.
+methods="$prefix/lib/apt/methods"
+if [ -d "$methods" ]; then
+    for m in "$methods"/*; do
+        [ -e "$m" ] || continue
+        if [ ! -x "$m" ]; then chmod 755 "$m" 2>/dev/null; fi
+    done
+    # kırık symlink (ör. https -> http hedefi yok) yerine gerçek kopya
+    for m in "$methods"/*; do
+        [ -L "$m" ] || continue
+        [ -e "$m" ] && continue
+        base=$(basename "$m")
+        target=""
+        case "$base" in
+            https|tor+https) target="$methods/http" ;;
+            tor+http) target="$methods/http" ;;
+        esac
+        if [ -n "$target" ] && [ -f "$target" ]; then
+            rm -f "$m" 2>/dev/null
+            cp "$target" "$m" 2>/dev/null
+            chmod 755 "$m" 2>/dev/null
+            printf 'mio: apt yöntemi onarıldı: %s\n' "$m" >&2
+        fi
+    done
+fi
+
+# 6) `pkg` kendi argüman ayrıştırıcısını kullanıyor, `-o` kabul etmez; yollar zaten yukarıda
+#    sabitlendi. apt/apt-get için ise `-o` en son okunan ve kazanan değerdir.
+if [ "$NAME" = "pkg" ]; then
+    exec "$bin/$NAME.mio-real" "$@"
+fi
 exec "$bin/$NAME.mio-real" \
     -o "Dir::Etc::sourcelist=$sources" \
     -o "Dir::Etc::sourceparts=$parts" \
@@ -661,7 +717,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 11 (menü, ses, paketler, istek dosyası, güvenli depo, pkg/apt sarmalayıcı v10: -o ile yol dayatma)\n'
+    printf 'mio sürüm: 12 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v11: apt methods onarımı, pkg -o almaz)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
