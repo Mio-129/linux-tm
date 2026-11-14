@@ -116,6 +116,19 @@ ensure_apt_config() {
         mkdir -p "$parts" 2>/dev/null
     fi
 
+    # 2b) sources.list içinde birden fazla `deb` satırı varsa ilkini bırak (yavaş ayna kalmasın)
+    if [ -f "$sources" ]; then
+        deb_count=$(grep -c '^deb ' "$sources" 2>/dev/null || true)
+        [ -n "$deb_count" ] || deb_count=0
+        if [ "$deb_count" -gt 1 ]; then
+            first_url=$(grep '^deb ' "$sources" 2>/dev/null | head -n 1 | awk '{print $2}')
+            if [ -n "$first_url" ]; then
+                printf '# %s tarafından yazıldı\ndeb %s stable main\n' "mio" "$first_url" > "$sources.tmp" 2>/dev/null &&
+                    mv "$sources.tmp" "$sources" 2>/dev/null
+            fi
+        fi
+    fi
+
     # 3) sources.list.d içinde AYNI depoyu tekrar eden dosya bırakma: apt
     #    "Target Packages is configured multiple times" uyarısı veriyor
     for dup in "$parts"/*.list; do
@@ -187,6 +200,8 @@ ensure_apt_config() {
         printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$PREFIX"
         printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$PREFIX"
         printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$PREFIX"
+        printf 'Acquire::ForceIPv4 "true";\n'
+        printf 'Acquire::Languages "none";\n'
     } > "$apc.tmp" 2>/dev/null
     if [ -s "$apc.tmp" ]; then
         mv "$apc.tmp" "$apc" 2>/dev/null
@@ -409,6 +424,9 @@ write_sources() {
         fix_sources
         [ -f "$MIRROR_FILE" ] || return 1
     }
+    # seçimi kalıcı olarak sakla, böylece her açılışta aynı depo kullanılır
+    printf '%s\n' "$url" > "$apt_dir/.mio-mirror" 2>/dev/null
+
     # aynı depoyu ikinci kez yazan dosyaları kaldır (çift kayıt uyarısı çıkmasın)
     parts_dir="$apt_dir/sources.list.d"
     mkdir -p "$parts_dir" 2>/dev/null
@@ -495,7 +513,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=18" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=19" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -515,7 +533,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=18
+MIO_WRAPPER_VERSION=19
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -628,6 +646,8 @@ export APT_CONFIG="$conf_dir/mio-apt.conf"
     printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$prefix"
     printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$prefix"
     printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$prefix"
+    printf 'Acquire::ForceIPv4 "true";\n'
+    printf 'Acquire::Languages "none";\n'
 } > "$APT_CONFIG" 2>/dev/null
 
 # 8) Tüm apt kök yollarını dayat. Bu apt yapısında `Dir` öneğe ayarlı olmadığı için göreli
@@ -653,6 +673,9 @@ apt_opts="$apt_opts -o Dir::Bin::dpkg=$prefix/bin/dpkg"
 # dpkg, yardımcı programlarını (sh, rm, tar, diff, dpkg-deb) `DPkg::Path` içinde arar; apt bu değeri
 # boş bulursa çocuk sürece kendi PATH'ini veriyor ve "N expected programs not found in PATH" çıkıyor.
 apt_opts="$apt_opts -o DPkg::Path=$prefix/bin:/system/bin:/system/xbin"
+# Hız: IPv4 zorla (IPv6 Türkiye'de sık sık takılıyor), çeviri dosyalarını indirme, 3 kez dene
+apt_opts="$apt_opts -o Acquire::ForceIPv4=true -o Acquire::Languages=none"
+apt_opts="$apt_opts -o Acquire::Retries=3 -o Acquire::http::Pipeline-Depth=0"
 arch=$(dpkg --print-architecture 2>/dev/null)
 [ -n "$arch" ] && apt_opts="$apt_opts -o APT::Architecture=$arch"
 
@@ -660,6 +683,8 @@ if [ "$NAME" = "pkg" ]; then
     # `pkg` kendi argüman ayrıştırıcısını kullanır, `-o` kabul etmez; ama `apt`/`apt-get`'i PATH'ten
     # çağırdığı için onlar bu sarmalayıcıdan geçer ve yollar orada dayatılır.
     export APT_CONFIG="$conf_dir/mio-apt.conf"
+    # `pkg` her çağrıda rastgele ayna seçip sources.list'i eziyordu; seçili depo korunsun
+    export TERMUX_PKG_NO_MIRROR_SELECT=1
     exec "$bin/$NAME.mio-real" "$@"
 fi
 # 9) termux-exec ön yükleyicisi apt'nin başlattığı indirme yöntemi süreçlerini bozabiliyor:
@@ -847,7 +872,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 23 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v18, çift depo kaydı temizlenir)\n'
+    printf 'mio sürüm: 24 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v19, hızlı indirme: sabit ayna, IPv4, çeviri yok)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
