@@ -146,6 +146,13 @@ ensure_apt_config() {
         done
     fi
 
+    # 3d) apt'nin çalışma klasörleri (yoksa "List directory .../var/lib/apt is missing")
+    for d in "$PREFIX/var/lib/apt/lists/partial" "$PREFIX/var/cache/apt/archives/partial" \
+             "$PREFIX/var/lib/dpkg" "$PREFIX/tmp"; do
+        [ -d "$d" ] || mkdir -p "$d" 2>/dev/null
+    done
+    [ -f "$PREFIX/var/lib/dpkg/status" ] || : > "$PREFIX/var/lib/dpkg/status" 2>/dev/null
+
     # 4) yolları sabitle (bu dosya apt tarafından her zaman okunur, atomik yazılır)
     conf="$conf_dir/zz-mio-sources.conf"
     {
@@ -156,6 +163,21 @@ ensure_apt_config() {
     if [ -s "$conf.tmp" ]; then
         mv "$conf.tmp" "$conf" 2>/dev/null
         chmod 644 "$conf" 2>/dev/null
+    fi
+
+    # 5) `pkg` kendi argüman ayrıştırıcısını kullandığı için `-o` geçemiyor; aynı yollar APT_CONFIG
+    #    ile dayatılır (apt bu dosyayı her çağrıda okur)
+    apc="$conf_dir/mio-apt.conf"
+    {
+        printf '# mio: apt yolları (APT_CONFIG)\n'
+        printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
+        printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+        printf 'Dir::State::lists "%s/var/lib/apt/lists";\n' "$PREFIX"
+        printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$PREFIX"
+    } > "$apc.tmp" 2>/dev/null
+    if [ -s "$apc.tmp" ]; then
+        mv "$apc.tmp" "$apc" 2>/dev/null
+        chmod 644 "$apc" 2>/dev/null
     fi
     return 0
 }
@@ -243,6 +265,18 @@ sources_report() {
         apt_bin="$candidate"
         break
     done
+    printf '\napt çalışma klasörleri:\n'
+    for d in "$PREFIX/var/lib/apt/lists/partial" "$PREFIX/var/cache/apt/archives/partial" \
+             "$PREFIX/var/lib/dpkg" "$PREFIX/tmp"; do
+        if [ -d "$d" ]; then printf '  VAR   %s\n' "$d"; else printf '  YOK   %s (bozuk)\n' "$d"; fi
+    done
+    printf 'APT_CONFIG dosyası: %s\n' "$PREFIX/etc/apt/apt.conf.d/mio-apt.conf"
+    if [ -f "$PREFIX/etc/apt/apt.conf.d/mio-apt.conf" ]; then
+        sed 's/^/  /' "$PREFIX/etc/apt/apt.conf.d/mio-apt.conf" 2>/dev/null
+    else
+        printf '  YOK\n'
+    fi
+
     printf '\napt methods (lib/apt/methods): '
     if [ -d "$PREFIX/lib/apt/methods" ]; then
         broken_m=""
@@ -262,7 +296,7 @@ sources_report() {
 
     printf '\napt kaynak yapılandırması (apt-config dump):\n'
     if [ -n "$apt_bin" ]; then
-        cfg_out=$(apt-config dump 2>/dev/null | grep -i "^Dir::Etc::source")
+        cfg_out=$(apt-config dump 2>/dev/null | grep -a -i "^Dir::Etc::source")
         if [ -n "$cfg_out" ]; then
             printf '%s\n' "$cfg_out" | sed 's/^/  /'
         else
@@ -428,7 +462,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=11" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=12" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -448,7 +482,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=11
+MIO_WRAPPER_VERSION=12
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -538,8 +572,25 @@ if [ -d "$methods" ]; then
     done
 fi
 
-# 6) `pkg` kendi argüman ayrıştırıcısını kullanıyor, `-o` kabul etmez; yollar zaten yukarıda
-#    sabitlendi. apt/apt-get için ise `-o` en son okunan ve kazanan değerdir.
+# 6) apt'nin çalışma klasörleri eksikse apt hiçbir şey okuyamaz:
+#    "E: List directory .../usr/var/lib/apt is missing" (bu, "sources.list" hatasından sonraki adım)
+for d in "$prefix/var/lib/apt/lists/partial" "$prefix/var/cache/apt/archives/partial" \
+         "$prefix/var/lib/dpkg" "$prefix/tmp"; do
+    [ -d "$d" ] || mkdir -p "$d" 2>/dev/null
+done
+touch "$prefix/var/lib/dpkg/status" 2>/dev/null
+
+# 7) Yolları APT_CONFIG ile dayat: bu dosya apt'nin kendisi tarafından okunur ve `pkg` gibi
+#    sarmalayıcılar `-o` geçirmese de geçerli olur.
+export APT_CONFIG="$conf_dir/mio-apt.conf"
+{
+    printf '# mio: apt yolları (APT_CONFIG)\n'
+    printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
+    printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+    printf 'Dir::State::lists "%s/var/lib/apt/lists";\n' "$prefix"
+    printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$prefix"
+} > "$APT_CONFIG" 2>/dev/null
+
 if [ "$NAME" = "pkg" ]; then
     exec "$bin/$NAME.mio-real" "$@"
 fi
@@ -717,7 +768,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 12 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v11: apt methods onarımı, pkg -o almaz)\n'
+    printf 'mio sürüm: 13 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v12: APT_CONFIG ile yol dayatma + eksik apt klasörleri)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)

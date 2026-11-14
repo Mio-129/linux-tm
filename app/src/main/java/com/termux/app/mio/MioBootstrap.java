@@ -61,6 +61,8 @@ public final class MioBootstrap {
         // "Read error - read (21: Is a directory)", so it is repaired before anything is installed
         repairAptSources();
         repairAptMethods();
+        repairAptState();
+        repairAptConfigFile();
 
         File binDir = TermuxConstants.TERMUX_BIN_PREFIX_DIR;
         if (!binDir.isDirectory()) {
@@ -280,6 +282,54 @@ public final class MioBootstrap {
         return repaired;
     }
 
+
+
+    /**
+     * apt needs its working directories (`var/lib/apt/lists/partial`, `var/cache/apt/archives/partial`,
+     * `var/lib/dpkg`, `tmp`). When they are missing apt fails with
+     * "E: List directory .../usr/var/lib/apt is missing" and the repository is never read.
+     */
+    public static boolean repairAptState() {
+        boolean repaired = false;
+        String[] directories = new String[]{
+            "var/lib/apt/lists/partial",
+            "var/cache/apt/archives/partial",
+            "var/lib/dpkg",
+            "tmp"
+        };
+        for (String directory : directories) {
+            File file = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, directory);
+            if (!file.isDirectory() && file.mkdirs()) {
+                repaired = true;
+                Logger.logInfo(LOG_TAG, "Created the apt directory \"" + file.getAbsolutePath() + "\"");
+            }
+        }
+        File status = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/status");
+        if (!status.isFile()) {
+            if (writeText(status, "")) repaired = true;
+        }
+        return repaired;
+    }
+
+    /**
+     * Write the apt configuration that is enforced through the `APT_CONFIG` environment variable, so
+     * that even wrappers which do not pass `-o` (like `pkg`) read the sources from the right place.
+     */
+    public static boolean repairAptConfigFile() {
+        File aptDir = new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "apt");
+        File confDir = new File(aptDir, "apt.conf.d");
+        if (!confDir.isDirectory()) return false;
+        String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+        String content = "# mio: apt paths (APT_CONFIG)\n" +
+            "Dir::Etc::sourcelist \"" + new File(aptDir, "sources.list").getAbsolutePath() + "\";\n" +
+            "Dir::Etc::sourceparts \"" + new File(aptDir, "sources.list.d").getAbsolutePath() + "\";\n" +
+            "Dir::State::lists \"" + prefix + "/var/lib/apt/lists\";\n" +
+            "Dir::Cache::archives \"" + prefix + "/var/cache/apt/archives\";\n";
+        File conf = new File(confDir, "mio-apt.conf");
+        String current = conf.isFile() ? readText(conf) : null;
+        if (content.equals(current)) return false;
+        return writeText(conf, content);
+    }
 
     /**
      * Make the apt download methods (`lib/apt/methods/http`, `https`, ...) executable.
