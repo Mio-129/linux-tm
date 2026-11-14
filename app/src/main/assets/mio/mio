@@ -91,6 +91,114 @@ EOF
 # ---------------------------------------------------------------------------------------------
 
 # $PREFIX/bin/pkg sarmalayıcısı: her pkg çağrısından önce depoyu onarır
+
+
+# `termux-change-repo` betiğini güvenli sürümümüzle değiştir: orijinali bu fork'ta sources.list'i
+# bozuyor (klasör olarak kalıyor). Orijinal bir kez `.orj` olarak saklanır.
+install_change_repo_replacement() {
+    tool="$PREFIX/bin/termux-change-repo"
+    backup="$PREFIX/bin/termux-change-repo.orj"
+    [ -d "$PREFIX/bin" ] || return 0
+    [ -f "$tool" ] || return 0
+
+    if [ ! -f "$backup" ] && ! grep -q "mio guvenli surum" "$tool" 2>/dev/null; then
+        cp "$tool" "$backup" 2>/dev/null
+    fi
+
+    cat > "$tool" <<'MIO_EOF'
+#!/data/data/com.mio/files/usr/bin/sh
+# mio guvenli surum: depo dosyasini atomik yazar, bozuk birakmaz
+prefix="${PREFIX:-/data/data/com.mio/files/usr}"
+[ -x "$prefix/bin/mio" ] || prefix=$(dirname "$(dirname "$0")")
+exec "$prefix/bin/mio" depo sec "$@"
+MIO_EOF
+    chmod 755 "$tool" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------------------------
+# Depo değiştirici (termux-change-repo yerine)
+#
+# Orijinal betik `sources.list`'i yeniden yazarken dosyayı bozuyor (klasör/symlink kalıyor) ve apt
+# "E: Read error - read (21: Is a directory)" veriyor. Bu sürüm her zaman geçici bir dosyaya yazıp
+# atomik olarak yerine koyar; bozuk bir girdi kalırsa tekrar dener.
+# ---------------------------------------------------------------------------------------------
+MIRROR_FILE="$PREFIX/etc/apt/sources.list"
+MIRROR_MAIN_DEFAULT="https://packages-cf.termux.dev/apt/termux-main"
+MIRRORS="
+Termux (CF)|https://packages-cf.termux.dev/apt/termux-main
+Termux (Asya)|https://mirror.termux.dev/termux/termux-main
+SJTU (Çin)|https://mirror.sjtu.edu.cn/termux/apt/termux-main
+Tsinghua (Çin)|https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main
+USTC (Çin)|https://mirrors.ustc.edu.cn/termux/apt/termux-main
+Astra (Rusya)|https://mirrors.astra.in.ua/termux/termux-main
+"
+
+write_sources() {
+    url="$1"
+    apt_dir="$PREFIX/etc/apt"
+    mkdir -p "$apt_dir" 2>/dev/null
+    tmp="$apt_dir/.sources.list.mio-new"
+    printf '# %s tarafından yazıldı\ndeb %s stable main\n' "mio" "$url" > "$tmp" 2>/dev/null || return 1
+    rm -rf "$MIRROR_FILE" 2>/dev/null
+    mv "$tmp" "$MIRROR_FILE" 2>/dev/null || return 1
+    chmod 644 "$MIRROR_FILE" 2>/dev/null
+    # Gerçekten dosya olduğunu doğrula (bozuk kurulumda şart)
+    [ -f "$MIRROR_FILE" ] && [ ! -L "$MIRROR_FILE" ] || {
+        fix_sources
+        [ -f "$MIRROR_FILE" ] || return 1
+    }
+    return 0
+}
+
+mirror_choose() {
+    if [ -n "${1:-}" ]; then
+        case "$1" in
+            cf|termux|varsayilan|default) write_sources "$MIRROR_MAIN_DEFAULT" && printf 'Depo: %s\n' "$MIRROR_MAIN_DEFAULT"; return $? ;;
+            asya|asia) write_sources "https://mirror.termux.dev/termux/termux-main" && printf 'Depo: mirror.termux.dev\n'; return $? ;;
+            sjtu) write_sources "https://mirror.sjtu.edu.cn/termux/apt/termux-main" && printf 'Depo: SJTU\n'; return $? ;;
+            tuna|tsinghua) write_sources "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main" && printf 'Depo: Tsinghua\n'; return $? ;;
+            ustc) write_sources "https://mirrors.ustc.edu.cn/termux/apt/termux-main" && printf 'Depo: USTC\n'; return $? ;;
+            astra) write_sources "https://mirrors.astra.in.ua/termux/termux-main" && printf 'Depo: Astra\n'; return $? ;;
+            *) # URL verilmişse doğrudan kullan
+               case "$1" in
+                   http*) write_sources "$1" && printf 'Depo: %s\n' "$1"; return $? ;;
+               esac
+               printf 'Bilinmeyen depo: %s\n' "$1" >&2
+               return 2 ;;
+        esac
+    fi
+
+    printf 'Depo seçin:\n'
+    printf '%s' "$MIRRORS" | while IFS='|' read -r label url; do
+        [ -n "$label" ] || continue
+        idx=$((idx+1))
+        printf '  %s) %s\n' "$idx" "$label"
+    done
+    printf 'Seçim [1]: '
+    read -r choice || choice=""
+    [ -z "$choice" ] && choice=1
+
+    n=0
+    url=""
+    printf '%s' "$MIRRORS" | while IFS='|' read -r label u; do
+        [ -n "$label" ] || continue
+        n=$((n+1))
+        if [ "$n" = "$choice" ]; then printf '%s' "$u"; fi
+    done > "$HOME/.mio/.mirror-choice" 2>/dev/null
+
+    url=$(cat "$HOME/.mio/.mirror-choice" 2>/dev/null)
+    rm -f "$HOME/.mio/.mirror-choice" 2>/dev/null
+    [ -n "$url" ] || url="$MIRROR_MAIN_DEFAULT"
+
+    if write_sources "$url"; then
+        printf 'Depo: %s\n' "$url"
+        printf 'Şimdi "pkg update" çalıştırabilirsin.\n'
+        return 0
+    fi
+    printf 'Depo yazılamadı: %s\n' "$MIRROR_FILE" >&2
+    return 1
+}
+
 install_pkg_wrapper() {
     real="$PREFIX/bin/pkg.mio-real"
     wrapper="$PREFIX/bin/pkg"
@@ -192,6 +300,7 @@ fix_sources() {
     fi
 
     install_pkg_wrapper
+    install_change_repo_replacement
     return 0
 }
 
@@ -276,7 +385,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 6 (menü, animasyon, yazı, renk, tam ekran, ses tuşları, paketler, istek dosyası)\n'
+    printf 'mio sürüm: 7 (menü, animasyon, yazı, renk, tam ekran, ses, paketler, istek dosyası, güvenli depo)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
@@ -864,6 +973,22 @@ case "$COMMAND" in
         exit $?
         ;;
     depo|repo|sources|duzelt|fix)
+        if [ "${1:-}" = "sec" ] || [ "${1:-}" = "degistir" ] || [ "${1:-}" = "switch" ]; then
+            shift
+            mirror_choose "${1:-}"
+            exit $?
+        fi
+        if [ "${1:-}" = "liste" ] || [ "${1:-}" = "list" ]; then
+            printf 'Depo seçenekleri:\n'
+            n=0
+            printf '%s' "$MIRRORS" | while IFS='|' read -r label url; do
+                [ -n "$label" ] || continue
+                n=$((n+1))
+                printf '  %s) %-16s %s\n' "$n" "$label" "$url"
+            done
+            printf 'Kullanım: mio depo sec <numara ya da ad>\n'
+            exit 0
+        fi
         fix_sources
         if [ -L "$PREFIX/etc/apt/sources.list" ] || { [ -e "$PREFIX/etc/apt/sources.list" ] && [ ! -f "$PREFIX/etc/apt/sources.list" ]; }; then
             printf 'Depo dosyası HÂLÂ BOZUK: %s\n' "$PREFIX/etc/apt/sources.list" >&2

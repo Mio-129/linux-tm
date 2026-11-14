@@ -348,7 +348,7 @@ public final class MioMenuActivity extends Activity {
         addSection("Terminal araçları");
 
         LinearLayout toolsRow1 = newRow();
-        addButton(toolsRow1, "Kaynak değiştir", v -> runCommand("termux-change-repo"));
+        addButton(toolsRow1, "Kaynak değiştir", v -> showMirrorDialog());
         addButton(toolsRow1, "Depoyu onar", v -> repairRepository());
         addButton(toolsRow1, "Yedekle", v -> runCommand(
             "cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C " + TermuxConstants.TERMUX_FILES_DIR_PATH + " home usr"));
@@ -1614,6 +1614,27 @@ public final class MioMenuActivity extends Activity {
      * shows where it is and copies the data of an old `com.termux` installation, whose files are not
      * readable by this app any more (see {@link MioDataMigration}).
      */
+    /** Pick an apt mirror and write `sources.list` safely (the stock script breaks it on this fork). */
+    private void showMirrorDialog() {
+        final String[] labels = new String[]{
+            "Termux (CF) — packages-cf.termux.dev",
+            "Termux (Asya) — mirror.termux.dev",
+            "SJTU (Çin)",
+            "Tsinghua (Çin)",
+            "USTC (Çin)",
+            "Astra (Rusya)"
+        };
+        final String[] keys = new String[]{"cf", "asya", "sjtu", "tuna", "ustc", "astra"};
+
+        new AlertDialog.Builder(this)
+            .setTitle("Depo seç")
+            .setItems(labels, (dialog, which) -> runCommand("mio depo sec " + keys[which]
+                + "; pkg update -y 2>&1 | tail -20"))
+            .setNeutralButton("Depoyu onar", (dialog, which) -> repairRepository())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
     /** Repair a `sources.list` that is a directory and reinstall the default mirror. */
     private void repairRepository() {
         final boolean repaired = MioBootstrap.repairAptSources();

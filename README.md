@@ -586,7 +586,10 @@ python3 -m http.server 8000 --directory docs
 `$PREFIX/etc/apt/sources.list` bir dosya olmalıdır. Bazı kurulumlarda klasör/symlink olarak kalır ve
 `pkg` `E: Read error - read (21: Is a directory)` verir. `pkg` komutu bir **sarmalayıcı** ile
 değiştirilir: her `pkg` çağrısından önce dosya değilse yeniden yazılır (gerçek pkg `pkg.mio-real`
-olarak saklanır), böylece `pkg install`/`termux-change-repo` sonrası bozulsa bile komutlar çalışır. `MioBootstrap.repairAptSources()` bunu açılışta ve
+olarak saklanır). Ayrıca `termux-change-repo` betiği **güvenli sürümümüzle değiştirilir** (orijinali
+`termux-change-repo.orj`): depo listesi geçici dosyaya yazılıp atomik olarak yerine konur, böylece
+ayna değiştirmek `sources.list`'i bozmaz. Panelde **Kaynak değiştir** aynı güvenli yolu kullanır,
+terminalde `mio depo sec <ad|url>` (cf, asya, sjtu, tuna, ustc, astra). `MioBootstrap.repairAptSources()` bunu açılışta ve
 `MioBootstrap.install()` sırasında onarır (klasörün içindeki listeyi kullanır, yoksa varsayılan
 `packages-cf.termux.dev` aynasını yazar); elle: **Terminal araçları > Depoyu onar** veya terminalde
 `mio depo`.
