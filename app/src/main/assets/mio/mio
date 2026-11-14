@@ -171,7 +171,6 @@ ensure_apt_config() {
     apc="$conf_dir/mio-apt.conf"
     {
         printf '# mio: apt yolları (APT_CONFIG)\n'
-        printf 'Dir "%s";\n' "$PREFIX"
         printf 'Dir::Etc "%s/etc/apt";\n' "$PREFIX"
         printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
         printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
@@ -183,6 +182,8 @@ ensure_apt_config() {
         printf 'Dir::Cache "%s/var/cache/apt";\n' "$PREFIX"
         printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$PREFIX"
         printf 'Dir::Log "%s/var/log/apt";\n' "$PREFIX"
+        printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$PREFIX"
+        printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$PREFIX"
     } > "$apc.tmp" 2>/dev/null
     if [ -s "$apc.tmp" ]; then
         mv "$apc.tmp" "$apc" 2>/dev/null
@@ -483,7 +484,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=13" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=14" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -503,7 +504,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=13
+MIO_WRAPPER_VERSION=14
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -606,7 +607,6 @@ touch "$prefix/var/lib/dpkg/status" 2>/dev/null
 export APT_CONFIG="$conf_dir/mio-apt.conf"
 {
     printf '# mio: apt yolları (APT_CONFIG)\n'
-    printf 'Dir "%s";\n' "$prefix"
     printf 'Dir::Etc "%s/etc/apt";\n' "$prefix"
     printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
     printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
@@ -618,13 +618,17 @@ export APT_CONFIG="$conf_dir/mio-apt.conf"
     printf 'Dir::Cache "%s/var/cache/apt";\n' "$prefix"
     printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$prefix"
     printf 'Dir::Log "%s/var/log/apt";\n' "$prefix"
+    printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$prefix"
+    printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$prefix"
 } > "$APT_CONFIG" 2>/dev/null
 
 # 8) Tüm apt kök yollarını dayat. Bu apt yapısında `Dir` öneğe ayarlı olmadığı için göreli
 #    varsayılanlar kök dosya sistemine çözülüyor ("E: List directory .../var/lib/apt is missing"),
 #    sourcelist/sourceparts da okunmadığı için "The list of sources could not be read" çıkıyor.
 #    Önek yolu boşluk içermez, bu yüzden seçenekler tek bir değişkende toplanabilir.
-apt_opts="-o Dir=$prefix -o Dir::Etc=$prefix/etc/apt"
+#    NOT: `Dir` kökü bilerek ayarlanmaz; bu apt sürümünde `Dir` verilince mutlak bir
+#    `Dir::Bin::methods` bile göreli hale geliyor ve yöntemler başlatılamıyor.
+apt_opts="-o Dir::Etc=$prefix/etc/apt"
 apt_opts="$apt_opts -o Dir::Etc::sourcelist=$sources -o Dir::Etc::sourceparts=$parts"
 apt_opts="$apt_opts -o Dir::Etc::trusted=$prefix/etc/apt/trusted.gpg"
 apt_opts="$apt_opts -o Dir::Etc::trustedparts=$prefix/etc/apt/trusted.gpg.d"
@@ -633,6 +637,13 @@ apt_opts="$apt_opts -o Dir::State::status=$prefix/var/lib/dpkg/status"
 apt_opts="$apt_opts -o Dir::Cache=$prefix/var/cache/apt"
 apt_opts="$apt_opts -o Dir::Cache::archives=$prefix/var/cache/apt/archives"
 apt_opts="$apt_opts -o Dir::Log=$prefix/var/log/apt"
+# apt, indirme yöntemlerini `Dir::Bin::methods` altında arar; bu değer mutlak değilse
+# `Dir` köküyle birleşip var olmayan bir yola dönüşür ("Method ... did not start correctly")
+apt_opts="$apt_opts -o Dir::Bin::methods=$prefix/lib/apt/methods"
+apt_opts="$apt_opts -o Dir::State::extended_states=$prefix/var/lib/apt/extended_states"
+apt_opts="$apt_opts -o Dir::Bin::dpkg=$prefix/bin/dpkg"
+arch=$(dpkg --print-architecture 2>/dev/null)
+[ -n "$arch" ] && apt_opts="$apt_opts -o APT::Architecture=$arch"
 
 if [ "$NAME" = "pkg" ]; then
     # `pkg` kendi argüman ayrıştırıcısını kullanır, `-o` kabul etmez; ama `apt`/`apt-get`'i PATH'ten
@@ -812,7 +823,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 15 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v13: apt Dir kökü öneğe sabitlendi; mio apt-test)\n'
+    printf 'mio sürüm: 16 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v14: apt methods yolu ve mimari dayatıldı; mio apt-test)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
