@@ -187,6 +187,62 @@ sources_report() {
     else
         printf 'YOK\n'
     fi
+    printf 'apt.conf.d/ diğer dosyalar: '
+    if [ -d "$PREFIX/etc/apt/apt.conf.d" ]; then
+        printf '%s\n' "$(ls -1 "$PREFIX/etc/apt/apt.conf.d" 2>/dev/null | tr '\n' ' ')"
+    else
+        printf 'klasör YOK\n'
+    fi
+
+    # apt.conf.d içindeki her dosyayı tek tek dene: hata veren dosya adını yaz
+    if [ -d "$PREFIX/etc/apt/apt.conf.d" ]; then
+        printf 'apt.conf.d taraması: '
+        bad=""
+        for f in "$PREFIX/etc/apt/apt.conf.d"/*; do
+            [ -f "$f" ] || continue
+            if grep -q "sources.list" "$f" 2>/dev/null && ! grep -q "Dir::Etc::sourcelist" "$f" 2>/dev/null; then
+                bad="$bad $f"
+            fi
+        done
+        if [ -n "$bad" ]; then
+            printf 'ŞÜPHELİ:%s\n' "$bad"
+        else
+            printf 'sorun görünmüyor\n'
+        fi
+    fi
+    printf 'etc/apt içeriği:\n'
+    ls -la "$PREFIX/etc/apt" 2>/dev/null | sed 's/^/  /'
+
+    # Gerçek apt'ye sor: hangi dosyaları kaynak olarak görüyor?
+    apt_bin=""
+    for candidate in "$PREFIX/bin/apt" "$PREFIX/bin/apt-get"; do
+        [ -f "$candidate" ] || continue
+        apt_bin="$candidate"
+        break
+    done
+    printf '\napt kaynak yapılandırması:\n'
+    if [ -n "$apt_bin" ]; then
+        cfg_out=$("$apt_bin" config dump 2>/dev/null | grep -i "^Dir::Etc::source")
+        if [ -n "$cfg_out" ]; then
+            printf '%s\n' "$cfg_out" | sed 's/^/  /'
+        else
+            printf '  okunamadı (config dump desteklenmiyor)\n'
+        fi
+    else
+        printf '  apt bulunamadı\n'
+    fi
+
+    printf '\napt update --print-uris (ilk 5 satır):\n'
+    if [ -n "$apt_bin" ]; then
+        probe=$("$apt_bin" -o Debug::NoLocking=1 update --print-uris 2>&1 | head -n 5)
+        printf '%s\n' "$probe" | sed 's/^/  /'
+    else
+        printf '  apt bulunamadı\n'
+    fi
+
+    printf '\nKurulu apt sürümü: '
+    dpkg -s apt 2>/dev/null | sed -n 's/^Version: //p' | head -n 1
+    printf '\n'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -568,17 +624,25 @@ send() {
         return 0
     fi
 
-    # Yayın/başlatma engellendi: istek dosyası kaldı, uygulama onu görüp çalıştıracak
-    if [ -f "$REQUEST_FILE" ]; then
-        printf 'mio: komut istek dosyasına yazıldı, uygulama görecek (%s)\n' "$REQUEST_FILE"
+    # `am` çıktısı güvenilir değil: başarılı olsa bile bazen "Broadcast completed" yazmıyor.
+    # Uygulama isteği aldığında dosyayı siliyor, o yüzden dosyanın YOK olması komutun ulaştığı anlamına
+    # gelir (eskiden bu durum yanlışlıkla "iletilemedi" diye raporlanıyordu).
+    if [ ! -f "$REQUEST_FILE" ]; then
         return 0
     fi
-    printf 'mio: komut uygulamaya iletilemedi.\n' >&2
-    return 1
+
+    # Dosya hâlâ duruyor: yayın engellenmiş olabilir, ama uygulama açıkken 600 ms'de bir yokluyor.
+    sleep 1 2>/dev/null || sleep 1
+    if [ ! -f "$REQUEST_FILE" ]; then
+        return 0
+    fi
+    printf 'mio: komut uygulamaya iletilemedi (yayın engellendi), istek dosyasına yazıldı: %s\n' "$REQUEST_FILE"
+    printf 'mio: uygulama açıkken bu dosya 600 ms içinde okunur; menü açılmazsa uygulamayı bir kez aç.\n'
+    return 0
 }
 
 diagnose() {
-    printf 'mio sürüm: 9 (menü, ses, paketler, istek dosyası, güvenli depo, pkg/apt sarmalayıcı v9)\n'
+    printf 'mio sürüm: 10 (menü, ses, paketler, istek dosyası, güvenli depo, pkg/apt sarmalayıcı v9, apt tanılama)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)

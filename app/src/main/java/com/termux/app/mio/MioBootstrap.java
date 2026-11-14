@@ -355,8 +355,14 @@ public final class MioBootstrap {
         if (!versionFile.isFile()) return null;
         try (BufferedReader reader = new BufferedReader(
             new InputStreamReader(new FileInputStream(versionFile), "UTF-8"))) {
-            String line = reader.readLine();
-            return line == null ? null : line.trim();
+            int lineNumber = 0;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                // Older releases wrote only the full version, newer ones write the app version first
+                if (lineNumber == 2 || line.startsWith("v") == false) return line.trim();
+            }
+            return null;
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read version file \"" + VERSION_FILE_PATH + "\"", e);
             return null;
@@ -365,8 +371,11 @@ public final class MioBootstrap {
 
     private static void writeVersionFile(@NonNull String version) {
         File versionFile = new File(VERSION_FILE_PATH);
+        // The first line is the app version, the second the full (length based) version, so that
+        // `mio teshis` can report which app build installed the commands
+        String content = "v" + BuildConfig.VERSION_NAME + "\n" + version + "\n";
         try (FileOutputStream out = new FileOutputStream(versionFile)) {
-            out.write(version.getBytes("UTF-8"));
+            out.write(content.getBytes("UTF-8"));
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to write version file \"" + VERSION_FILE_PATH + "\"", e);
         }
