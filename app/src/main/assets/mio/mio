@@ -116,13 +116,14 @@ ensure_apt_config() {
         mkdir -p "$parts" 2>/dev/null
     fi
 
-    # 3) apt'nin okuyacağı geçerli bir liste: sources.list.d/mio.list
-    if [ ! -s "$parts/mio.list" ]; then
-        url=$(sed -n 's/^deb \([^ ]*\) .*/\1/p' "$sources" 2>/dev/null | head -n 1)
-        [ -n "$url" ] || url="$MIRROR_MAIN_DEFAULT"
-        printf 'deb %s stable main\n' "$url" > "$parts/mio.list" 2>/dev/null
-        chmod 644 "$parts/mio.list" 2>/dev/null
-    fi
+    # 3) sources.list.d içinde AYNI depoyu tekrar eden dosya bırakma: apt
+    #    "Target Packages is configured multiple times" uyarısı veriyor
+    for dup in "$parts"/*.list; do
+        [ -f "$dup" ] || continue
+        case "$(basename "$dup")" in
+            mio.list|main.list) rm -f "$dup" 2>/dev/null ;;
+        esac
+    done
 
     # 3b) apt.conf.d içinde kaynak yollarını bozan artıkları kaldır.
     #     Bir dosya `sources.list` geçiyor ama doğru `Dir::Etc::` anahtarını kullanmıyorsa (ör. yanlış
@@ -408,12 +409,10 @@ write_sources() {
         fix_sources
         [ -f "$MIRROR_FILE" ] || return 1
     }
-    # sources.list.d/mio.list da aynı depoyu göstermeli (apt onu da okuyabilir)
+    # aynı depoyu ikinci kez yazan dosyaları kaldır (çift kayıt uyarısı çıkmasın)
     parts_dir="$apt_dir/sources.list.d"
     mkdir -p "$parts_dir" 2>/dev/null
-    printf 'deb %s stable main\n' "$url" > "$parts_dir/.mio.list.tmp" 2>/dev/null &&
-        mv "$parts_dir/.mio.list.tmp" "$parts_dir/mio.list" 2>/dev/null
-    chmod 644 "$parts_dir/mio.list" 2>/dev/null
+    rm -f "$parts_dir/mio.list" "$parts_dir/main.list" 2>/dev/null
     # zz-mio-sources.conf yolları sabitler; yoksa oluştur
     conf_file="$apt_dir/apt.conf.d/zz-mio-sources.conf"
     if [ ! -s "$conf_file" ]; then
@@ -496,7 +495,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=17" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=18" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -516,7 +515,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=17
+MIO_WRAPPER_VERSION=18
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -564,12 +563,8 @@ if [ -L "$parts" ] || { [ -e "$parts" ] && [ ! -d "$parts" ]; }; then
     printf 'mio: sources.list.d onarıldı\n' >&2
 fi
 
-# 3) okunacak geçerli bir *.list dosyası kalsın
-if [ ! -s "$parts/mio.list" ]; then
-    url=$(sed -n 's/^deb \([^ ]*\) .*/\1/p' "$sources" 2>/dev/null | head -n 1)
-    [ -n "$url" ] || url="https://packages-cf.termux.dev/apt/termux-main"
-    printf 'deb %s stable main\n' "$url" > "$parts/mio.list" 2>/dev/null
-fi
+# 3) aynı depoyu tekrar eden dosyaları kaldır ("configured multiple times" uyarısı biter)
+rm -f "$parts/mio.list" "$parts/main.list" 2>/dev/null
 
 # 4) yolları apt.conf.d içinde de sabitle (bazı apt çağrıları dosyayı okumadan geçebiliyor)
 conf="$conf_dir/zz-mio-sources.conf"
@@ -852,7 +847,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 22 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17, apt-fix onarır + test eder)\n'
+    printf 'mio sürüm: 23 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v18, çift depo kaydı temizlenir)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1549,7 +1544,9 @@ case "$COMMAND" in
 
         printf '\nSONUÇ: '
         if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
-            printf 'apt çalışıyor. Kurulum için: apt install <paket> -y\n'
+            printf 'apt çalışıyor.\n'
+            printf 'Paket listelerini indirmek için: apt update\n'
+            printf 'Sonra: apt install <paket> -y\n'
         else
             printf 'yukarıdaki satırlara bak (eksik program ya da depo okuma hatası)\n'
         fi
