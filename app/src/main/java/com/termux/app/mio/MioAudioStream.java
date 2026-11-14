@@ -185,7 +185,6 @@ public final class MioAudioStream {
                 mVolume = index;
                 mAudioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index,
                     AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
-                if (mVolumeListener != null) mVolumeListener.run();
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to set the media volume", e);
             }
@@ -224,17 +223,6 @@ public final class MioAudioStream {
             mLastToast.show();
         });
     }
-    /** Called on the main thread after the media volume was changed. */
-    public interface VolumeListener {
-        void onVolumeChanged(int percent);
-    }
-
-    private volatile VolumeListener mVolumeListener;
-
-    public void setVolumeListener(@Nullable VolumeListener listener) {
-        mVolumeListener = listener;
-    }
-
     /** @return The current media volume as a percentage, {@code -1} if it is not known. */
     public int getVolumePercent() {
         if (mAudioManager == null) return -1;
