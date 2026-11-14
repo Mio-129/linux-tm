@@ -321,19 +321,19 @@ sources_report() {
         ls -l "$hm" 2>/dev/null | sed 's/^/  /'
         readlink -f "$hm" 2>/dev/null | sed 's/^/  hedef: /'
         if [ -x "$hm" ]; then printf '  çalıştırılabilir: evet\n'; else printf '  çalıştırılabilir: HAYIR\n'; fi
-        ht=$("$PREFIX/lib/apt/methods/https" --version 2>&1 | head -n 2)
-        if [ -n "$ht" ]; then printf '  çalıştırma denemesi:\n'; printf '%s\n' "$ht" | sed 's/^/    /'; else printf '  çalıştırma denemesi: çıktı yok (sessiz başarısızlık)\n'; fi
+        ht=$("$PREFIX/lib/apt/methods/https" --version 2>&1 | head -n 3)
+        hrc=$?
+        if [ -n "$ht" ]; then
+            printf '  çalıştırma denemesi (çıkış=%s):\n' "$hrc"
+            printf '%s\n' "$ht" | sed 's/^/    /'
+        else
+            printf '  çalıştırma denemesi: çıktı yok, çıkış=%s\n' "$hrc"
+        fi
     else
         printf '  %s YOK\n' "$hm"
     fi
 
-    printf '\napt update --print-uris (ilk 5 satır):\n'
-    if [ -n "$apt_bin" ]; then
-        probe=$("$apt_bin" -o Debug::NoLocking=1 update --print-uris 2>&1 | head -n 5)
-        printf '%s\n' "$probe" | sed 's/^/  /'
-    else
-        printf '  apt bulunamadı\n'
-    fi
+    # NOT: burada `apt update` ÇALIŞTIRILMAZ. Ağa çıktığı için rapor dakikalarca asılı kalıyordu.
 
     printf '\nKurulu apt sürümü: '
     dpkg -s apt 2>/dev/null | sed -n 's/^Version: //p' | head -n 1
@@ -812,7 +812,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 14 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v13: apt Dir kökü öneğe sabitlendi)\n'
+    printf 'mio sürüm: 15 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v13: apt Dir kökü öneğe sabitlendi; mio apt-test)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1406,6 +1406,21 @@ case "$COMMAND" in
             *) printf 'Kullanım: mio ses + | - | durum\n'; exit 1 ;;
         esac
         exit $?
+        ;;
+    apt-test|methods|method-test)
+        # https yöntemi neden başlamıyor? Doğrudan çalıştırıp çıktısını göster (ağ yok, anında biter)
+        m="$PREFIX/lib/apt/methods/https"
+        printf 'Dosya: %s\n' "$m"
+        ls -l "$m" 2>/dev/null | sed 's/^/  /'
+        printf 'hedef: %s\n' "$(readlink -f "$m" 2>/dev/null)"
+        printf '\nÇalıştırma denemesi:\n'
+        out=$("$m" 2>&1 </dev/null | head -n 5)
+        printf '  çıkış kodu: %s\n' "$?"
+        if [ -n "$out" ]; then printf '%s\n' "$out" | sed 's/^/  /'; else printf '  çıktı yok\n'; fi
+        printf '\nldd benzeri bağımlılık kontrolü (lib dizini):\n'
+        ls "$PREFIX/lib" 2>/dev/null | grep -i "gnutls\|nettle\|gmp\|idn\|unistring\|hogweed" | head -20 | sed 's/^/  /'
+        printf '\nNOT: "error while loading shared libraries: libXXX.so" satırı eksik kütüphaneyi söyler.\n'
+        exit 0
         ;;
     apt|sources-durum|apt-neden)
         sources_report
