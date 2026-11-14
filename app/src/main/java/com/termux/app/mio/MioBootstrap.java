@@ -251,6 +251,22 @@ public final class MioBootstrap {
         File oldAptConf = new File(aptConfDir, "99-mio-sources.conf");
         if (oldAptConf.exists() && oldAptConf.delete()) repaired = true;
 
+        // Any other file in `apt.conf.d` that mentions `sources.list` without setting the proper
+        // `Dir::Etc::sourcelist` key makes apt resolve the sources path as a directory, which is
+        // exactly what prints "Ignoring file 'sources.list' ... Is a directory"
+        File[] confFiles = aptConfDir.listFiles();
+        if (confFiles != null) {
+            for (File confFile : confFiles) {
+                if (!confFile.isFile() || confFile.getName().equals("zz-mio-sources.conf")) continue;
+                if (confFile.length() > 8192) continue;
+                String content = readText(confFile);
+                if (content != null && content.contains("sources.list") && !content.contains("Dir::Etc::sourcelist")) {
+                    if (confFile.delete()) repaired = true;
+                    Logger.logInfo(LOG_TAG, "Removed the broken apt configuration \"" + confFile.getAbsolutePath() + "\"");
+                }
+            }
+        }
+
         File aptConf = new File(aptConfDir, "zz-mio-sources.conf");
         String conf = "# mio: pin the apt source locations\n" +
             "Dir::Etc::sourcelist \"" + sourcesList.getAbsolutePath() + "\";\n" +
