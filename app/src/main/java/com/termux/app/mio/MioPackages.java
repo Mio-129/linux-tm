@@ -1,5 +1,7 @@
 package com.termux.app.mio;
 
+import com.termux.shared.termux.TermuxConstants;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
