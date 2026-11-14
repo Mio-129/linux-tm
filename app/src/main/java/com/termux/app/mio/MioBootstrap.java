@@ -335,7 +335,8 @@ public final class MioBootstrap {
             "Dir::Cache::archives \"" + prefix + "/var/cache/apt/archives\";\n" +
             "Dir::Log \"" + prefix + "/var/log/apt\";\n" +
             "Dir::Bin::methods \"" + prefix + "/lib/apt/methods\";\n" +
-            "Dir::State::extended_states \"" + prefix + "/var/lib/apt/extended_states\";\n";
+            "Dir::State::extended_states \"" + prefix + "/var/lib/apt/extended_states\";\n" +
+            "DPkg::Path \"" + prefix + "/bin:/system/bin:/system/xbin\";\n";
         File conf = new File(confDir, "mio-apt.conf");
         String current = conf.isFile() ? readText(conf) : null;
         if (content.equals(current)) return false;

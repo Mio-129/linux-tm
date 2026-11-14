@@ -184,6 +184,7 @@ ensure_apt_config() {
         printf 'Dir::Log "%s/var/log/apt";\n' "$PREFIX"
         printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$PREFIX"
         printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$PREFIX"
+        printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$PREFIX"
     } > "$apc.tmp" 2>/dev/null
     if [ -s "$apc.tmp" ]; then
         mv "$apc.tmp" "$apc" 2>/dev/null
@@ -484,7 +485,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=16" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=17" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -504,7 +505,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=16
+MIO_WRAPPER_VERSION=17
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -620,6 +621,7 @@ export APT_CONFIG="$conf_dir/mio-apt.conf"
     printf 'Dir::Log "%s/var/log/apt";\n' "$prefix"
     printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$prefix"
     printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$prefix"
+    printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$prefix"
 } > "$APT_CONFIG" 2>/dev/null
 
 # 8) Tüm apt kök yollarını dayat. Bu apt yapısında `Dir` öneğe ayarlı olmadığı için göreli
@@ -642,6 +644,9 @@ apt_opts="$apt_opts -o Dir::Log=$prefix/var/log/apt"
 apt_opts="$apt_opts -o Dir::Bin::methods=$prefix/lib/apt/methods"
 apt_opts="$apt_opts -o Dir::State::extended_states=$prefix/var/lib/apt/extended_states"
 apt_opts="$apt_opts -o Dir::Bin::dpkg=$prefix/bin/dpkg"
+# dpkg, yardımcı programlarını (sh, rm, tar, diff, dpkg-deb) `DPkg::Path` içinde arar; apt bu değeri
+# boş bulursa çocuk sürece kendi PATH'ini veriyor ve "N expected programs not found in PATH" çıkıyor.
+apt_opts="$apt_opts -o DPkg::Path=$prefix/bin:/system/bin:/system/xbin"
 arch=$(dpkg --print-architecture 2>/dev/null)
 [ -n "$arch" ] && apt_opts="$apt_opts -o APT::Architecture=$arch"
 
@@ -836,7 +841,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 19 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v16: apt PATH düzeltmesi)\n'
+    printf 'mio sürüm: 20 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17: DPkg::Path verildi, dpkg sh/tar/diff bulur)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
