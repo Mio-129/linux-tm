@@ -217,7 +217,90 @@ public final class MioBootstrap {
             }
         }
 
+
+        // apt reads `Dir::Etc::sourceparts` as a directory: if `sources.list` ends up being that
+        // directory, apt prints "Ignoring file 'sources.list' ... invalid filename extension"
+        // together with "E: Read error - read (21: Is a directory)". Both paths are pinned to
+        // absolute locations here so that a broken value can never leak into apt again.
+        File sourceParts = new File(aptDir, "sources.list.d");
+        // A symlink is only removed when it does not point to a directory: apt must be able to read
+        // it as the `sourceparts` directory, and a link to `..` makes it list `sources.list` itself.
+        String sourcePartsLink = readSymlink(sourceParts);
+        if (sourcePartsLink != null) {
+            if (!sourceParts.isDirectory() && sourceParts.delete()) repaired = true;
+        } else if (sourceParts.exists() && !sourceParts.isDirectory()) {
+            if (deleteRecursively(sourceParts)) repaired = true;
+        }
+        if (!sourceParts.isDirectory() && sourceParts.mkdirs()) repaired = true;
+
+        File aptConfDir = new File(aptDir, "apt.conf.d");
+        if (aptConfDir.exists() && !aptConfDir.isDirectory()) {
+            if (deleteRecursively(aptConfDir)) repaired = true;
+        }
+        if (!aptConfDir.isDirectory() && aptConfDir.mkdirs()) repaired = true;
+
+        File mainList = new File(sourceParts, "mio.list");
+        if (!mainList.isFile() || mainList.length() == 0) {
+            String url = readFirstDebUrl(sourcesList);
+            if (url == null) url = "https://packages-cf.termux.dev/apt/termux-main";
+            if (writeText(mainList, "deb " + url + " stable main\n")) repaired = true;
+        }
+
+        // An older version of the app wrote this file; apt reads `apt.conf.d` alphabetically and the
+        // pinned values must win over anything else
+        File oldAptConf = new File(aptConfDir, "99-mio-sources.conf");
+        if (oldAptConf.exists() && oldAptConf.delete()) repaired = true;
+
+        File aptConf = new File(aptConfDir, "zz-mio-sources.conf");
+        String conf = "# mio: pin the apt source locations\n" +
+            "Dir::Etc::sourcelist \"" + sourcesList.getAbsolutePath() + "\";\n" +
+            "Dir::Etc::sourceparts \"" + sourceParts.getAbsolutePath() + "\";\n";
+        String currentConf = aptConf.isFile() ? readText(aptConf) : null;
+        if (currentConf == null || !currentConf.equals(conf)) {
+            if (writeText(aptConf, conf)) repaired = true;
+        }
+
         return repaired;
+    }
+
+    /**
+     * Returns the target of a symlink, or {@code null} if the path is not a symlink or cannot be
+     * read.
+     */
+    @Nullable
+    private static String readSymlink(@NonNull File file) {
+        try {
+            return android.system.Os.readlink(file.getAbsolutePath());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @Nullable
+    private static String readFirstDebUrl(@NonNull File sourcesList) {
+        if (!sourcesList.isFile()) return null;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(sourcesList)))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (!line.startsWith("deb ")) continue;
+                String[] parts = line.split("\\s+");
+                if (parts.length >= 2 && !parts[1].isEmpty()) return parts[1];
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read \"" + sourcesList.getAbsolutePath() + "\"", e);
+        }
+        return null;
+    }
+
+    private static boolean writeText(@NonNull File file, @NonNull String content) {
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(content.getBytes("UTF-8"));
+            return true;
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to write \"" + file.getAbsolutePath() + "\"", e);
+            return false;
+        }
     }
 
     private static boolean deleteRecursively(@NonNull File file) {

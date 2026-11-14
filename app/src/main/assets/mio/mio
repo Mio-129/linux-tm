@@ -83,6 +83,60 @@ EOF
 # apt depoları: sources.list bir dosya olmalı. Bozuk kurulumlarda klasör olarak kalabiliyor
 # ("E: Read error - read (21: Is a directory)"), bu yüzden pkg'den önce onarılır.
 
+
+# ---------------------------------------------------------------------------------------------
+# apt yapılandırmasını sabitle
+#
+# Ekran çıktısındaki iki satır birlikte geliyor:
+#   N: Ignoring file 'sources.list' in directory '.../etc/apt' as it has an invalid filename extension
+#   E: Read error - read (21: Is a directory)
+# Yani apt, `.../etc/apt` klasörünü "sourceparts" dizini sanıp içindeki sources.list'i arıyor.
+# Çözüm: yolları apt.conf.d içinde açıkça sabitlemek ve geçerli bir `*.list` dosyası bırakmak.
+# ---------------------------------------------------------------------------------------------
+ensure_apt_config() {
+    apt_dir="$PREFIX/etc/apt"
+    sources="$apt_dir/sources.list"
+    parts="$apt_dir/sources.list.d"
+    conf_dir="$apt_dir/apt.conf.d"
+    mkdir -p "$apt_dir" "$parts" "$conf_dir" 2>/dev/null
+
+    # 1) sources.list her zaman normal bir dosya
+    if [ -L "$sources" ] || { [ -e "$sources" ] && [ ! -f "$sources" ]; } || { [ -f "$sources" ] && [ ! -s "$sources" ]; }; then
+        fix_sources >/dev/null 2>&1
+    fi
+
+    # 2) sourceparts gerçekten bir klasör olmalı; apt onu "sourceparts" olarak okuyor.
+    #    Symlink kendini gösteriyorsa (ör. -> ..) apt "Ignoring file 'sources.list'" der.
+    if [ -L "$parts" ]; then
+        rm -f "$parts" 2>/dev/null
+        mkdir -p "$parts" 2>/dev/null
+    elif [ -e "$parts" ] && [ ! -d "$parts" ]; then
+        rm -rf "$parts" 2>/dev/null
+        mkdir -p "$parts" 2>/dev/null
+    fi
+
+    # 3) apt'nin okuyacağı geçerli bir liste: sources.list.d/mio.list
+    if [ ! -s "$parts/mio.list" ]; then
+        url=$(sed -n 's/^deb \([^ ]*\) .*/\1/p' "$sources" 2>/dev/null | head -n 1)
+        [ -n "$url" ] || url="$MIRROR_MAIN_DEFAULT"
+        printf 'deb %s stable main\n' "$url" > "$parts/mio.list" 2>/dev/null
+        chmod 644 "$parts/mio.list" 2>/dev/null
+    fi
+
+    # 4) yolları sabitle (bu dosya apt tarafından her zaman okunur, atomik yazılır)
+    conf="$conf_dir/zz-mio-sources.conf"
+    {
+        printf '# mio: pin the apt source locations\n'
+        printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
+        printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+    } > "$conf.tmp" 2>/dev/null
+    if [ -s "$conf.tmp" ]; then
+        mv "$conf.tmp" "$conf" 2>/dev/null
+        chmod 644 "$conf" 2>/dev/null
+    fi
+    return 0
+}
+
 # ---------------------------------------------------------------------------------------------
 # Teşhis: sources.list dosyasının gerçek durumu (klasör/symlink/boş/izin)
 # ---------------------------------------------------------------------------------------------
@@ -109,13 +163,30 @@ sources_report() {
 
     printf 'pkg: '
     if [ -f "$PREFIX/bin/pkg.mio-real" ]; then printf 'sarmalayıcı kurulu\n'; else printf 'sarmalayıcı YOK\n'; fi
+    printf 'apt: '
+    if [ -f "$PREFIX/bin/apt.mio-real" ]; then printf 'sarmalayıcı kurulu\n'; else printf 'sarmalayıcı YOK\n'; fi
+    printf 'apt-get: '
+    if [ -f "$PREFIX/bin/apt-get.mio-real" ]; then printf 'sarmalayıcı kurulu\n'; else printf 'sarmalayıcı YOK\n'; fi
     printf 'termux-change-repo: '
     if grep -q "mio guvenli surum" "$PREFIX/bin/termux-change-repo" 2>/dev/null; then
         printf 'güvenli sürüm\n'
     else
         printf 'ORİJİNAL (depoyu bozabilir)\n'
     fi
-    ls -l "$PREFIX/etc/apt/sources.list.d" 2>/dev/null | sed 's/^/  /'
+    printf 'sources.list.d: '
+    if [ -d "$PREFIX/etc/apt/sources.list.d" ]; then
+        printf 'klasör (ok), %s dosya\n' "$(ls -1 "$PREFIX/etc/apt/sources.list.d" 2>/dev/null | wc -l | tr -d ' ')"
+        ls -l "$PREFIX/etc/apt/sources.list.d" 2>/dev/null | sed 's/^/  /'
+    else
+        printf 'YOK (bozuk)\n'
+    fi
+    printf 'apt.conf.d/zz-mio-sources.conf: '
+    if [ -f "$PREFIX/etc/apt/apt.conf.d/zz-mio-sources.conf" ]; then
+        printf 'var\n'
+        sed 's/^/  /' "$PREFIX/etc/apt/apt.conf.d/zz-mio-sources.conf" 2>/dev/null
+    else
+        printf 'YOK\n'
+    fi
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -183,6 +254,24 @@ write_sources() {
         fix_sources
         [ -f "$MIRROR_FILE" ] || return 1
     }
+    # sources.list.d/mio.list da aynı depoyu göstermeli (apt onu da okuyabilir)
+    parts_dir="$apt_dir/sources.list.d"
+    mkdir -p "$parts_dir" 2>/dev/null
+    printf 'deb %s stable main\n' "$url" > "$parts_dir/.mio.list.tmp" 2>/dev/null &&
+        mv "$parts_dir/.mio.list.tmp" "$parts_dir/mio.list" 2>/dev/null
+    chmod 644 "$parts_dir/mio.list" 2>/dev/null
+    # zz-mio-sources.conf yolları sabitler; yoksa oluştur
+    conf_file="$apt_dir/apt.conf.d/zz-mio-sources.conf"
+    if [ ! -s "$conf_file" ]; then
+        mkdir -p "$apt_dir/apt.conf.d" 2>/dev/null
+        {
+            printf '# mio: pin the apt source locations\n'
+            printf 'Dir::Etc::sourcelist "%s";\n' "$MIRROR_FILE"
+            printf 'Dir::Etc::sourceparts "%s";\n' "$parts_dir"
+        } > "$conf_file.tmp" 2>/dev/null
+        [ -s "$conf_file.tmp" ] && mv "$conf_file.tmp" "$conf_file" 2>/dev/null
+        chmod 644 "$conf_file" 2>/dev/null
+    fi
     return 0
 }
 
@@ -235,22 +324,23 @@ mirror_choose() {
     return 1
 }
 
-install_pkg_wrapper() {
-    real="$PREFIX/bin/pkg.mio-real"
-    wrapper="$PREFIX/bin/pkg"
+install_apt_wrapper() {
+    name="$1"
+    real="$PREFIX/bin/$name.mio-real"
+    wrapper="$PREFIX/bin/$name"
     [ -d "$PREFIX/bin" ] || return 0
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=8" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=9" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
-    # Gerçek pkg'yi bir kez sakla (sarmalayıcı kendini çağırmasın)
+    # Gerçek aracı bir kez sakla (sarmalayıcı kendini çağırmasın)
     if [ ! -f "$real" ]; then
         if grep -q "MIO_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
-            # Daha önce sarmalanmış ama gerçek pkg kaybolmuş: kurtarılamaz
-            printf 'mio: pkg.mio-real yok, sarmalayıcı kurulmadı\n' >&2
+            # Daha önce sarmalanmış ama gerçek araç kaybolmuş: kurtarılamaz
+            printf 'mio: %s.mio-real yok, sarmalayıcı kurulmadı\n' "$name" >&2
             return 1
         fi
         cp "$wrapper" "$real" 2>/dev/null || return 1
@@ -258,26 +348,34 @@ install_pkg_wrapper() {
     fi
     [ -x "$real" ] || return 1
 
-    # Sarmalayıcı kendi konumundan çalışır (PREFIX'e ihtiyaç duymaz) ve onarımı kendi yapar
+    # Sarmalayıcı kendi konumundan çalışır (PREFIX'e ihtiyaç duymaz), onarımı kendi yapar
     cat > "$wrapper" <<'MIO_EOF'
-#!/data/data/com.mio/files/usr/bin/sh
-# mio pkg sarmalay: sources.list dosya değilse/boşsa yeniden yazar, sonra gerçek pkg'yi çalıştırır
-MIO_WRAPPER_VERSION=8
+#!@@PREFIX@@/bin/sh
+# mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
+MIO_WRAPPER_VERSION=9
+NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
-sources="$prefix/etc/apt/sources.list"
+apt_dir="$prefix/etc/apt"
+sources="$apt_dir/sources.list"
+parts="$apt_dir/sources.list.d"
+conf_dir="$apt_dir/apt.conf.d"
+
+mkdir -p "$apt_dir" "$parts" "$conf_dir" 2>/dev/null
+
+# 1) sources.list normal, boş olmayan bir dosya olmalı
 broken=0
 if [ -L "$sources" ]; then
     broken=1
 elif [ -e "$sources" ] && [ ! -f "$sources" ]; then
     broken=1
-elif [ -f "$sources" ] && [ ! -s "$sources" ]; then
-    broken=1
 elif [ ! -e "$sources" ]; then
+    broken=1
+elif [ ! -s "$sources" ]; then
     broken=1
 fi
 if [ "$broken" -eq 1 ]; then
-    tmp="$prefix/etc/apt/sources.list.mio-tmp"
+    tmp="$apt_dir/sources.list.mio-tmp"
     found=""
     if [ -d "$sources" ]; then
         for candidate in "$sources"/*; do
@@ -294,10 +392,45 @@ if [ "$broken" -eq 1 ]; then
     chmod 644 "$sources" 2>/dev/null
     printf 'mio: bozuk sources.list onarıldı\n' >&2
 fi
-exec "$bin/pkg.mio-real" "$@"
+
+# 2) sourceparts gerçek bir klasör olmalı (klasör değilse apt "Is a directory" verir)
+if [ -L "$parts" ] || { [ -e "$parts" ] && [ ! -d "$parts" ]; }; then
+    rm -rf "$parts" 2>/dev/null
+    mkdir -p "$parts" 2>/dev/null
+    printf 'mio: sources.list.d onarıldı\n' >&2
+fi
+
+# 3) okunacak geçerli bir *.list dosyası kalsın
+if [ ! -s "$parts/mio.list" ]; then
+    url=$(sed -n 's/^deb \([^ ]*\) .*/\1/p' "$sources" 2>/dev/null | head -n 1)
+    [ -n "$url" ] || url="https://packages-cf.termux.dev/apt/termux-main"
+    printf 'deb %s stable main\n' "$url" > "$parts/mio.list" 2>/dev/null
+fi
+
+# 4) yolları apt.conf.d içinde sabitle
+conf="$conf_dir/zz-mio-sources.conf"
+{
+    printf '# mio: pin the apt source locations\n'
+    printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
+    printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+} > "$conf" 2>/dev/null
+
+exec "$bin/$NAME.mio-real" "$@"
 MIO_EOF
+    sed -e "s|@@NAME@@|$name|g" -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
     chmod 755 "$wrapper" 2>/dev/null
-    printf 'mio: pkg sarmalayıcısı kuruldu (%s)\n' "$wrapper"
+    printf 'mio: %s sarmalayıcısı kuruldu\n' "$name"
+}
+
+install_apt_wrappers() {
+    install_apt_wrapper pkg
+    install_apt_wrapper apt
+    install_apt_wrapper apt-get
+    return 0
+}
+
+install_pkg_wrapper() {
+    install_apt_wrappers
 }
 
 fix_sources() {
@@ -356,8 +489,11 @@ fix_sources() {
         done
     fi
 
-    install_pkg_wrapper
+    install_apt_wrappers
     install_change_repo_replacement
+    if [ "${MIO_NO_APT_CONFIG:-0}" != "1" ]; then
+        MIO_NO_APT_CONFIG=1 ensure_apt_config
+    fi
     return 0
 }
 
@@ -442,7 +578,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 8 (menü, ses, paketler, istek dosyası, güvenli depo, pkg sarmalayıcı v8)\n'
+    printf 'mio sürüm: 9 (menü, ses, paketler, istek dosyası, güvenli depo, pkg/apt sarmalayıcı v9)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
