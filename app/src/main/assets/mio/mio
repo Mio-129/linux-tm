@@ -82,6 +82,42 @@ EOF
 # ---------------------------------------------------------------------------------------------
 # apt depoları: sources.list bir dosya olmalı. Bozuk kurulumlarda klasör olarak kalabiliyor
 # ("E: Read error - read (21: Is a directory)"), bu yüzden pkg'den önce onarılır.
+
+# ---------------------------------------------------------------------------------------------
+# Teşhis: sources.list dosyasının gerçek durumu (klasör/symlink/boş/izin)
+# ---------------------------------------------------------------------------------------------
+sources_report() {
+    sources="$PREFIX/etc/apt/sources.list"
+    printf 'Dizin: %s\n' "$PREFIX/etc/apt"
+    if [ -L "$sources" ]; then
+        printf 'sources.list: SYMLINK -> %s\n' "$(readlink "$sources" 2>/dev/null)"
+    elif [ -d "$sources" ]; then
+        printf 'sources.list: KLASÖR (bozuk)\n'
+        ls -la "$sources" 2>/dev/null | sed 's/^/  /'
+    elif [ -f "$sources" ]; then
+        if [ -s "$sources" ]; then
+            printf 'sources.list: DOSYA, %s bayt (ok)\n' "$(wc -c < "$sources" 2>/dev/null | tr -d ' ')"
+            sed 's/^/  /' "$sources" 2>/dev/null
+        else
+            printf 'sources.list: DOSYA ama BOŞ (bozuk)\n'
+        fi
+    elif [ -e "$sources" ]; then
+        printf 'sources.list: başka bir tür (bozuk)\n'
+    else
+        printf 'sources.list: YOK\n'
+    fi
+
+    printf 'pkg: '
+    if [ -f "$PREFIX/bin/pkg.mio-real" ]; then printf 'sarmalayıcı kurulu\n'; else printf 'sarmalayıcı YOK\n'; fi
+    printf 'termux-change-repo: '
+    if grep -q "mio guvenli surum" "$PREFIX/bin/termux-change-repo" 2>/dev/null; then
+        printf 'güvenli sürüm\n'
+    else
+        printf 'ORİJİNAL (depoyu bozabilir)\n'
+    fi
+    ls -l "$PREFIX/etc/apt/sources.list.d" 2>/dev/null | sed 's/^/  /'
+}
+
 # ---------------------------------------------------------------------------------------------
 # apt depoları onarımı
 #
@@ -203,25 +239,44 @@ install_pkg_wrapper() {
     real="$PREFIX/bin/pkg.mio-real"
     wrapper="$PREFIX/bin/pkg"
     [ -d "$PREFIX/bin" ] || return 0
+    [ -f "$wrapper" ] || return 0
+
+    # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
+    if grep -q "MIO_WRAPPER_VERSION=8" "$wrapper" 2>/dev/null; then
+        return 0
+    fi
 
     # Gerçek pkg'yi bir kez sakla (sarmalayıcı kendini çağırmasın)
-    if [ -f "$wrapper" ] && [ ! -f "$real" ]; then
-        if grep -q "mio pkg sarmalay" "$wrapper" 2>/dev/null; then
-            return 0
+    if [ ! -f "$real" ]; then
+        if grep -q "MIO_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
+            # Daha önce sarmalanmış ama gerçek pkg kaybolmuş: kurtarılamaz
+            printf 'mio: pkg.mio-real yok, sarmalayıcı kurulmadı\n' >&2
+            return 1
         fi
-        cp "$wrapper" "$real" 2>/dev/null || return 0
+        cp "$wrapper" "$real" 2>/dev/null || return 1
         chmod 755 "$real" 2>/dev/null
     fi
-    [ -x "$real" ] || return 0
+    [ -x "$real" ] || return 1
 
     # Sarmalayıcı kendi konumundan çalışır (PREFIX'e ihtiyaç duymaz) ve onarımı kendi yapar
     cat > "$wrapper" <<'MIO_EOF'
 #!/data/data/com.mio/files/usr/bin/sh
-# mio pkg sarmalay: sources.list dosya değilse yeniden yazar, sonra gerçek pkg'yi çalıştırır
+# mio pkg sarmalay: sources.list dosya değilse/boşsa yeniden yazar, sonra gerçek pkg'yi çalıştırır
+MIO_WRAPPER_VERSION=8
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
 sources="$prefix/etc/apt/sources.list"
-if [ -L "$sources" ] || { [ -e "$sources" ] && [ ! -f "$sources" ]; }; then
+broken=0
+if [ -L "$sources" ]; then
+    broken=1
+elif [ -e "$sources" ] && [ ! -f "$sources" ]; then
+    broken=1
+elif [ -f "$sources" ] && [ ! -s "$sources" ]; then
+    broken=1
+elif [ ! -e "$sources" ]; then
+    broken=1
+fi
+if [ "$broken" -eq 1 ]; then
     tmp="$prefix/etc/apt/sources.list.mio-tmp"
     found=""
     if [ -d "$sources" ]; then
@@ -257,6 +312,8 @@ fix_sources() {
     elif [ -e "$sources" ] && [ ! -f "$sources" ]; then
         broken=1
     elif [ -f "$sources" ] && [ ! -r "$sources" ]; then
+        broken=1
+    elif [ -f "$sources" ] && [ ! -s "$sources" ]; then
         broken=1
     elif [ ! -e "$sources" ]; then
         broken=1
@@ -385,7 +442,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 7 (menü, animasyon, yazı, renk, tam ekran, ses, paketler, istek dosyası, güvenli depo)\n'
+    printf 'mio sürüm: 8 (menü, ses, paketler, istek dosyası, güvenli depo, pkg sarmalayıcı v8)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     printf '\nKurulu komutlar:\n'
@@ -820,6 +877,11 @@ fi
 COMMAND="$1"
 shift
 
+# Her komuttan önce depo dosyasını doğrula/onar: bozuksa pkg ve apt hiç çalışmaz
+if [ -d "${PREFIX:-}/etc/apt" ]; then
+    fix_sources >/dev/null 2>&1
+fi
+
 case "$COMMAND" in
     -h|--help|help|yardim|yardım)
         usage
@@ -971,6 +1033,10 @@ case "$COMMAND" in
             *) printf 'Kullanım: mio ses + | - | durum\n'; exit 1 ;;
         esac
         exit $?
+        ;;
+    apt|sources-durum|apt-neden)
+        sources_report
+        exit 0
         ;;
     depo|repo|sources|duzelt|fix)
         if [ "${1:-}" = "sec" ] || [ "${1:-}" = "degistir" ] || [ "${1:-}" = "switch" ]; then
