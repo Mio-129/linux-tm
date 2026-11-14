@@ -574,3 +574,17 @@ python3 -m http.server 8000 --directory docs
 - **APK adı:** `mio_apt-android-7-debug_arm64-v8a.apk`.
 - Not: Android'de `/data/data` kullanıcıya kapalıdır; dosya yöneticileri aynı klasörü
   `Android/data/com.mio` olarak gösterir.
+### `mio` komutu uygulamaya ulaşmıyorsa
+
+`mio` komutu, uygulamaya `am broadcast` / `am startservice` ile niyet yollar. Bir uygulama ancak
+**exported** bir bileşene dışarıdan niyet alabildiği için `TermuxService` `exported="true"` ve
+`com.mio.permission.MIO_COMMAND` (normal seviye) korumasıyla açıldı; `mio` betiği sırayla
+`broadcast → startservice → am start (TermuxActivity)` dener.
+
+### Bozuk `sources.list`
+
+`$PREFIX/etc/apt/sources.list` bir dosya olmalıdır. Bazı kurulumlarda klasör olarak kalır ve `pkg`
+`E: Read error - read (21: Is a directory)` verir. `MioBootstrap.repairAptSources()` bunu açılışta ve
+`MioBootstrap.install()` sırasında onarır (klasörün içindeki listeyi kullanır, yoksa varsayılan
+`packages-cf.termux.dev` aynasını yazar); elle: **Terminal araçları > Depoyu onar** veya terminalde
+`mio depo`.

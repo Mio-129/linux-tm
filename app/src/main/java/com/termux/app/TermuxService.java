@@ -144,6 +144,15 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         com.termux.app.mio.MioBootstrap.ensureInstalled(this);
     }
 
+    /**
+     * The `mio` command script sends its commands with `am broadcast`/`am startservice` from the
+     * terminal. A broadcast or a service start from another app (the `am` binary runs as the shell
+     * user) only reaches a receiver that is exported, so this receiver is registered as exported.
+     * It only accepts the `com.termux.mio.action.*` actions, every other action is ignored by
+     * {@link MioCommandManager#isMioAction(String)}.
+     */
+    private static final String MIO_RECEIVER_PERMISSION = "com.mio.permission.MIO_COMMAND";
+
     /** Register the receiver for the `swset` and `so` command broadcasts. */
     private void registerMioCommandReceiver() {
         IntentFilter intentFilter = new IntentFilter();

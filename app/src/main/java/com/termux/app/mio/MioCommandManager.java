@@ -271,7 +271,19 @@ public final class MioCommandManager {
             case ACTION_VOLUME_KEYS: {
                 MioRequest request = MioRequest.fromRequestFile("mio");
                 if (request != null) MioRequest.deleteRequestFile();
-                toggleVolumeKeys();
+                // `mio ses +|-|durum` passes a mode, without a mode the volume key menu is toggled
+                String volumeMode = intent.getStringExtra(EXTRA_MODE);
+                if (volumeMode == null || volumeMode.isEmpty()) {
+                    toggleVolumeKeys();
+                } else if ("up".equals(volumeMode)) {
+                    MioAudioStream.adjustMediaVolume(mApplication, 10);
+                } else if ("down".equals(volumeMode)) {
+                    MioAudioStream.adjustMediaVolume(mApplication, -10);
+                } else if ("status".equals(volumeMode)) {
+                    int percent = MioAudioStream.getInstance(mApplication).getVolumePercent();
+                    Logger.showToast(mApplication, "Medya sesi: "
+                        + (percent < 0 ? "bilinmiyor" : percent + "%"), true);
+                }
                 return true;
             }
             case ACTION_AUDIO_STREAM: {

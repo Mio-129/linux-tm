@@ -20,6 +20,7 @@
 
     <!-- Termux RUN_COMMAND permission -->
     <string name="permission_run_command_label">Run commands in &TERMUX_APP_NAME; environment</string>
+    <string name="permission_mio_command_label">Send menu and media commands to &TERMUX_APP_NAME;</string>
     <string name="permission_run_command_description">execute arbitrary commands within &TERMUX_APP_NAME;
         environment and access files</string>
 

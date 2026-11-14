@@ -167,18 +167,23 @@ public final class MioMenuActivity extends Activity {
 
         LinearLayout volumeRow = newRow();
         addButton(volumeRow, "Ses −", v -> {
-            pendingVolume[0] = Math.max(0, pendingVolume[0] - 10);
-            MioAudioStream.getInstance(context).setVolumePercent(pendingVolume[0]);
+            // The media volume of the phone is adjusted even when no background video is playing
+            MioAudioStream.adjustMediaVolume(context, -10);
+            pendingVolume[0] = Math.max(0, MioAudioStream.getInstance(context).getVolumePercent());
             volumeSeekBar.setProgress(pendingVolume[0]);
             volumeLabel.setText("Medya sesi: " + pendingVolume[0] + "%");
-            toast("Medya sesi: " + pendingVolume[0] + "%");
         });
         addButton(volumeRow, "Ses +", v -> {
-            pendingVolume[0] = Math.min(100, pendingVolume[0] + 10);
-            MioAudioStream.getInstance(context).setVolumePercent(pendingVolume[0]);
+            MioAudioStream.adjustMediaVolume(context, 10);
+            pendingVolume[0] = Math.max(0, MioAudioStream.getInstance(context).getVolumePercent());
             volumeSeekBar.setProgress(pendingVolume[0]);
             volumeLabel.setText("Medya sesi: " + pendingVolume[0] + "%");
-            toast("Medya sesi: " + pendingVolume[0] + "%");
+        });
+        addButton(volumeRow, "Sessiz", v -> {
+            MioAudioStream.getInstance(context).setVolumePercent(0);
+            pendingVolume[0] = 0;
+            volumeSeekBar.setProgress(0);
+            volumeLabel.setText("Medya sesi: 0%");
         });
         addButton(volumeRow, "Uygula", v -> {
             MioAudioStream.getInstance(context).setVolumePercent(volumeSeekBar.getProgress());
@@ -344,6 +349,7 @@ public final class MioMenuActivity extends Activity {
 
         LinearLayout toolsRow1 = newRow();
         addButton(toolsRow1, "Kaynak değiştir", v -> runCommand("termux-change-repo"));
+        addButton(toolsRow1, "Depoyu onar", v -> repairRepository());
         addButton(toolsRow1, "Yedekle", v -> runCommand(
             "cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C " + TermuxConstants.TERMUX_FILES_DIR_PATH + " home usr"));
         addButton(toolsRow1, "IP adresi", v -> runCommand("ifconfig 2>/dev/null || ip addr"));
@@ -1608,6 +1614,26 @@ public final class MioMenuActivity extends Activity {
      * shows where it is and copies the data of an old `com.termux` installation, whose files are not
      * readable by this app any more (see {@link MioDataMigration}).
      */
+    /** Repair a `sources.list` that is a directory and reinstall the default mirror. */
+    private void repairRepository() {
+        final boolean repaired = MioBootstrap.repairAptSources();
+        new AlertDialog.Builder(this)
+            .setTitle("Depo onarımı")
+            .setMessage((repaired
+                    ? "Bozuk `sources.list` onarıldı.\n\n"
+                    : "Bozuk depo dosyası bulunamadı.\n\n")
+                + "Şimdi depo listesi yenilensin mi? (pkg update)")
+            .setPositiveButton("pkg update", (dialog, which) -> runCommand("pkg update -y"))
+            .setNeutralButton("Komutu göster", (dialog, which) -> new AlertDialog.Builder(this)
+                .setTitle("Depo dosyası")
+                .setMessage(com.termux.shared.termux.TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH
+                    + "/apt/sources.list")
+                .setPositiveButton(android.R.string.ok, null)
+                .show())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
     private void showDataMigrationDialog() {
         final boolean oldData = MioDataMigration.hasOldData();
         final boolean readable = MioDataMigration.canReadOldData();

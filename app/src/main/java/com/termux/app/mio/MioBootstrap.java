@@ -57,6 +57,10 @@ public final class MioBootstrap {
     public static synchronized void install(@Nullable Context context) {
         if (context == null) return;
 
+        // A broken `sources.list` (a directory instead of a file) makes `pkg` fail with
+        // "Read error - read (21: Is a directory)", so it is repaired before anything is installed
+        repairAptSources();
+
         File binDir = TermuxConstants.TERMUX_BIN_PREFIX_DIR;
         if (!binDir.isDirectory()) {
             Logger.logDebug(LOG_TAG, "Not installing commands since \"" + binDir.getAbsolutePath() + "\" does not exist yet");
@@ -144,6 +148,84 @@ public final class MioBootstrap {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to install command \"" + command + "\"", e);
             return false;
         }
+    }
+
+    /**
+     * Repair the apt sources of the prefix.
+     *
+     * `sources.list` has to be a file. In some installations (a bootstrap that was extracted while
+     * the prefix was patched) it ends up being a directory, and then every `pkg` command fails with
+     * `E: Read error - read (21: Is a directory)`. The directory is replaced with the list that it
+     * contains, or with the default Termux mirror.
+     *
+     * @return {@code true} if something was repaired.
+     */
+    public static boolean repairAptSources() {
+        final File aptDir = new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "apt");
+        if (!aptDir.isDirectory()) return false;
+
+        boolean repaired = false;
+
+        File sourcesList = new File(aptDir, "sources.list");
+        if (sourcesList.isDirectory()) {
+            Logger.logInfo(LOG_TAG, "Repairing \"" + sourcesList.getAbsolutePath() + "\", which is a directory");
+
+            String content = null;
+            File[] children = sourcesList.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    if (child.isFile() && child.getName().contains("sources.list")) {
+                        content = readText(child);
+                        if (content != null && !content.trim().isEmpty()) break;
+                        content = null;
+                    }
+                }
+            }
+            if (content == null || content.trim().isEmpty()) {
+                content = "deb https://packages-cf.termux.dev/apt/termux-main stable main\n";
+            }
+
+            File temporary = new File(aptDir, "sources.list.mio-tmp");
+            boolean written = false;
+            try (FileOutputStream out = new FileOutputStream(temporary)) {
+                out.write(content.getBytes("UTF-8"));
+                written = true;
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to write \"" + temporary.getAbsolutePath() + "\"", e);
+            }
+
+            if (written && deleteRecursively(sourcesList) && temporary.renameTo(sourcesList)) {
+                Logger.logInfo(LOG_TAG, "Repaired \"" + sourcesList.getAbsolutePath() + "\"");
+                repaired = true;
+            } else {
+                Logger.logWarn(LOG_TAG, "Failed to repair \"" + sourcesList.getAbsolutePath() + "\"");
+            }
+        }
+
+        // Directories inside `sources.list.d` are ignored by apt, but they keep failing the ones that
+        // are followed by a real entry, so they are removed as well
+        File sourcesListDir = new File(aptDir, "sources.list.d");
+        File[] entries = sourcesListDir.listFiles();
+        if (entries != null) {
+            for (File entry : entries) {
+                if (entry.isDirectory()) {
+                    if (deleteRecursively(entry)) repaired = true;
+                    Logger.logInfo(LOG_TAG, "Removed the broken sources entry \"" + entry.getAbsolutePath() + "\"");
+                }
+            }
+        }
+
+        return repaired;
+    }
+
+    private static boolean deleteRecursively(@NonNull File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        return file.delete();
     }
 
     @Nullable

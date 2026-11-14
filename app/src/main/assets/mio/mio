@@ -65,11 +65,59 @@ Kullanım: mio [komut]
   mio teshis              Komutların kurulu olup olmadığını ve sürümünü gösterir.
   mio menuler             Yan menüleri gösterir/gizler.
   mio oturum              Yeni oturum açar.
+  mio ses + | -           Medya sesini artırır/azaltır.
   mio yardim              Bu yardımı gösterir.
 
 Arka plan medyası (fotoğraf/video):  swset <dosya>   swset off
 Videonun sesi:                       so   so off   so stop
 EOF
+}
+
+
+# ---------------------------------------------------------------------------------------------
+# apt depoları: sources.list bir dosya olmalı. Bozuk kurulumlarda klasör olarak kalabiliyor
+# ("E: Read error - read (21: Is a directory)"), bu yüzden pkg'den önce onarılır.
+# ---------------------------------------------------------------------------------------------
+fix_sources() {
+    apt_dir="$PREFIX/etc/apt"
+    sources="$apt_dir/sources.list"
+    [ -d "$apt_dir" ] || return 0
+
+    if [ -d "$sources" ] && [ ! -L "$sources" ]; then
+        printf 'mio: bozuk sources.list (klasör) onarılıyor...\n'
+        # İçinde gerçek bir liste varsa onu kullan, yoksa varsayılan depoyu yaz
+        found=""
+        for candidate in "$sources"/*; do
+            [ -f "$candidate" ] || continue
+            case "$candidate" in
+                *sources.list*) found="$candidate"; break ;;
+            esac
+        done
+        tmp="$apt_dir/sources.list.mio-tmp"
+        if [ -n "$found" ]; then
+            cp "$found" "$tmp" 2>/dev/null
+        fi
+        if [ ! -s "$tmp" ]; then
+            printf 'deb https://packages-cf.termux.dev/apt/termux-main stable main\n' > "$tmp"
+        fi
+        rm -rf "$sources" 2>/dev/null
+        mv "$tmp" "$sources" 2>/dev/null
+        chmod 644 "$sources" 2>/dev/null
+        printf 'mio: sources.list dosyası yeniden oluşturuldu:\n'
+        sed 's/^/  /' "$sources" 2>/dev/null
+    fi
+
+    # sources.list.d içinde dosya olmayan girdiler de apt'yi bozar
+    if [ -d "$apt_dir/sources.list.d" ]; then
+        for entry in "$apt_dir/sources.list.d"/*; do
+            [ -e "$entry" ] || continue
+            if [ -d "$entry" ] && [ ! -L "$entry" ]; then
+                printf 'mio: bozuk depo girdisi siliniyor: %s\n' "$entry"
+                rm -rf "$entry" 2>/dev/null
+            fi
+        done
+    fi
+    return 0
 }
 
 run_am() {
@@ -86,7 +134,12 @@ send_command() {
     if run_am broadcast "$@" >/dev/null 2>&1; then
         return 0
     fi
-    run_am startservice -n com.mio/com.termux.app.TermuxService "$@" >/dev/null 2>&1
+    if run_am startservice -n com.mio/com.termux.app.TermuxService "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Son çare: niyeti doğrudan etkinliğe gönder (bazı Android sürümleri am broadcast/startservice'i
+    # kısıtlar, ama etkinlik başlatma izinli olduğu için komut yine de iletilir)
+    run_am start -n com.mio/com.termux.app.TermuxActivity "$@" >/dev/null 2>&1
 }
 
 write_request() {
@@ -251,6 +304,7 @@ pkg_url() {
 }
 
 pkg_install_remote() {
+    fix_sources
     dir=$(pkg_find "$1") || {
         printf 'mio: paket bulunamadı: %s\n' "$1" >&2
         return 1
@@ -296,6 +350,7 @@ pkg_install_remote() {
 }
 
 pkg_install() {
+    fix_sources
     dir=$(pkg_find "$1") || {
         printf 'mio: paket bulunamadı: %s\n' "$1" >&2
         printf 'Klasör: %s\n' "$PKG_DIR" >&2
@@ -667,6 +722,20 @@ case "$COMMAND" in
         ;;
     menuler|menüler|menu-bar|bar)
         send "$ACTION_STYLE" --es mode toggle-bars
+        exit $?
+        ;;
+    ses|volume|vol)
+        case "${1:-}" in
+            +|artir|arttir|up) send "$ACTION_VOLUME_KEYS" --es mode up ;;
+            -|azalt|down) send "$ACTION_VOLUME_KEYS" --es mode down ;;
+            durum|status) send "$ACTION_VOLUME_KEYS" --es mode status ;;
+            *) printf 'Kullanım: mio ses + | - | durum\n'; exit 1 ;;
+        esac
+        exit $?
+        ;;
+    depo|repo|sources|duzelt|fix)
+        fix_sources
+        printf 'Depo dosyası: %s\n' "$PREFIX/etc/apt/sources.list"
         exit $?
         ;;
     menu|menü|terminal-menu|tmenu)

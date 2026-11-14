@@ -165,19 +165,27 @@ public final class MioAudioStream {
      */
     public void setVolumePercent(final int percent) {
         mMainHandler.post(() -> {
+            // Only start playing the audio of the background video when there is one: the media
+            // volume of the phone has to be adjustable without a background video too
             if (!mLatched) {
-                mLatched = true;
                 MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();
-                if (backgroundView != null && backgroundView.isVideo()) backgroundView.setAudioEnabled(true);
+                if (backgroundView != null && backgroundView.isVideo()) {
+                    mLatched = true;
+                    backgroundView.setAudioEnabled(true);
+                }
             }
 
-            if (mAudioManager == null) return;
+            if (mAudioManager == null) {
+                Logger.logWarn(LOG_TAG, "Cannot set the media volume, no AudioManager");
+                return;
+            }
             try {
                 int max = mAudioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
                 int index = Math.round(Math.max(0, Math.min(100, percent)) / 100f * max);
                 mVolume = index;
                 mAudioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index,
                     AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
+                if (mVolumeListener != null) mVolumeListener.run();
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to set the media volume", e);
             }
@@ -216,4 +224,47 @@ public final class MioAudioStream {
             mLastToast.show();
         });
     }
+    /** Called on the main thread after the media volume was changed. */
+    public interface VolumeListener {
+        void onVolumeChanged(int percent);
+    }
+
+    private volatile VolumeListener mVolumeListener;
+
+    public void setVolumeListener(@Nullable VolumeListener listener) {
+        mVolumeListener = listener;
+    }
+
+    /** @return The current media volume as a percentage, {@code -1} if it is not known. */
+    public int getVolumePercent() {
+        if (mAudioManager == null) return -1;
+        try {
+            int max = mAudioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int current = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            if (max <= 0) return -1;
+            return Math.round(current * 100f / max);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** Raise or lower the media volume of the phone by the passed percentage. */
+    public static void adjustMediaVolume(@NonNull Context context, final int deltaPercent) {
+        AudioManager audioManager = (AudioManager) context.getApplicationContext()
+            .getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager == null) return;
+        try {
+            int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int step = Math.max(1, Math.round(max * Math.abs(deltaPercent) / 100f));
+            boolean raise = deltaPercent > 0;
+            for (int i = 0; i < step; i++) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                    raise ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER,
+                    i == step - 1 ? AudioManager.FLAG_SHOW_UI : 0);
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to adjust the media volume", e);
+        }
+    }
+
 }

@@ -12,6 +12,13 @@
         android:name="android.software.leanback"
         android:required="false" />
 
+    <!-- Sent by the `mio` command script of the terminal to the app. Normal level, so that the
+         shell user can send it without a dialog, but other apps cannot spoof it easily. -->
+    <permission
+        android:name="${TERMUX_PACKAGE_NAME}.permission.MIO_COMMAND"
+        android:label="@string/permission_mio_command_label"
+        android:protectionLevel="normal" />
+
     <permission
         android:name="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND"
         android:description="@string/permission_run_command_description"
@@ -217,7 +224,8 @@
 
         <service
             android:name=".app.TermuxService"
-            android:exported="false" />
+            android:exported="true"
+            android:permission="${TERMUX_PACKAGE_NAME}.permission.MIO_COMMAND" />
 
         <service
             android:name=".app.RunCommandService"
