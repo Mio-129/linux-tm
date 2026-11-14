@@ -484,7 +484,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=14" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=15" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -504,7 +504,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=14
+MIO_WRAPPER_VERSION=15
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -650,6 +650,13 @@ if [ "$NAME" = "pkg" ]; then
     # çağırdığı için onlar bu sarmalayıcıdan geçer ve yollar orada dayatılır.
     export APT_CONFIG="$conf_dir/mio-apt.conf"
     exec "$bin/$NAME.mio-real" "$@"
+fi
+# 9) termux-exec ön yükleyicisi apt'nin başlattığı indirme yöntemi süreçlerini bozabiliyor:
+#    "E: Sub-process https returned an error code (100)" / "Method ... did not start correctly".
+#    apt ve alt süreçleri kendi yollarını bildiği için ön yükleyici olmadan çalıştırılır.
+if [ -n "${LD_PRELOAD:-}" ]; then
+    MIO_LD_PRELOAD="$LD_PRELOAD"
+    unset LD_PRELOAD
 fi
 # shellcheck disable=SC2086
 exec "$bin/$NAME.mio-real" $apt_opts "$@"
@@ -823,7 +830,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 16 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v14: apt methods yolu ve mimari dayatıldı; mio apt-test)\n'
+    printf 'mio sürüm: 17 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v15: apt LD_PRELOAD olmadan çalışır; mio apt-test)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1419,18 +1426,31 @@ case "$COMMAND" in
         exit $?
         ;;
     apt-test|methods|method-test)
-        # https yöntemi neden başlamıyor? Doğrudan çalıştırıp çıktısını göster (ağ yok, anında biter)
+        # https yöntemi neden başlamıyor? Ağa ÇIKMAZ, saniyeler içinde biter.
         m="$PREFIX/lib/apt/methods/https"
         printf 'Dosya: %s\n' "$m"
         ls -l "$m" 2>/dev/null | sed 's/^/  /'
         printf 'hedef: %s\n' "$(readlink -f "$m" 2>/dev/null)"
-        printf '\nÇalıştırma denemesi:\n'
-        out=$("$m" 2>&1 </dev/null | head -n 5)
-        printf '  çıkış kodu: %s\n' "$?"
-        if [ -n "$out" ]; then printf '%s\n' "$out" | sed 's/^/  /'; else printf '  çıktı yok\n'; fi
-        printf '\nldd benzeri bağımlılık kontrolü (lib dizini):\n'
-        ls "$PREFIX/lib" 2>/dev/null | grep -i "gnutls\|nettle\|gmp\|idn\|unistring\|hogweed" | head -20 | sed 's/^/  /'
-        printf '\nNOT: "error while loading shared libraries: libXXX.so" satırı eksik kütüphaneyi söyler.\n'
+
+        printf '\nLD_PRELOAD: %s\n' "${LD_PRELOAD:-<yok>}"
+
+        printf '\n1) normal ortamda çalıştırma:\n'
+        out=$("$m" </dev/null 2>&1 | head -n 3)
+        printf '   çıkış kodu: %s\n' "$?"
+        [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/   /'
+
+        printf '\n2) LD_PRELOAD olmadan çalıştırma:\n'
+        out=$(env -u LD_PRELOAD "$m" </dev/null 2>&1 | head -n 3)
+        printf '   çıkış kodu: %s\n' "$?"
+        [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/   /'
+
+        printf '\n3) apt gerçekte hangi yolu kullanıyor:\n'
+        env -u LD_PRELOAD apt-config dump 2>/dev/null | grep -a -E '^Dir::Bin::methods|^Dir::State|^Dir::Etc' | sed 's/^/   /'
+
+        printf '\n4) apt-get kuru çalıştırma (indirme yok):\n'
+        out=$(env -u LD_PRELOAD apt-get -o Debug::NoLocking=1 --print-uris update 2>&1 </dev/null | head -n 5)
+        printf '%s\n' "$out" | sed 's/^/   /'
+        printf '\nNOT: 4. adımda "did not start correctly" yoksa apt yöntemi başlatabiliyor demektir.\n'
         exit 0
         ;;
     apt|sources-durum|apt-neden)
