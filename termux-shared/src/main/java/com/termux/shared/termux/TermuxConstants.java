@@ -609,6 +609,13 @@ public final class TermuxConstants {
     /** The prefix path of the original Termux app, which the bootstrap binaries are built with. */
     public static final String TERMUX_LEGACY_PREFIX_DIR_PATH = "/data/data/com.termux/files/usr";
 
+    /**
+     * The data directory path of the original Termux app. The bootstrap binaries and the second stage
+     * script of the bootstrap contain this path too (e.g. `/data/data/com.termux/files/home`), so the
+     * installer replaces this shorter form instead of only the prefix.
+     */
+    public static final String TERMUX_LEGACY_DATA_DIR_PATH = "/data/data/com.termux";
+
     /** The home path of the original Termux app, used by the data migration of the fork. */
     public static final String TERMUX_LEGACY_HOME_DIR_PATH = "/data/data/com.termux/files/home";
     /** Termux app $PREFIX directory */

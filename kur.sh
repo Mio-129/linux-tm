@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/data/data/com.mio/files/usr/bin/bash
 #
 # kur.sh - Termux (linux-tm) ve bu depodaki özel komutlar için kurulum betiği.
 #
@@ -54,9 +54,9 @@ REPO_BRANCH_DEFAULT="master"
 INSTALL_DIR_DEFAULT="$HOME/linux-tm"
 BUILD_SCRIPT="$INSTALL_DIR_DEFAULT/build.sh"
 
-PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
+PREFIX_DIR="${PREFIX:-/data/data/com.mio/files/usr}"
 IS_TERMUX=0
-if [ -d "$PREFIX_DIR" ] && [ "${PREFIX_DIR#/data/data/com.termux}" != "$PREFIX_DIR" ]; then
+if [ -d "$PREFIX_DIR" ] && [ "${PREFIX_DIR#/data/data/com.mio}" != "$PREFIX_DIR" ]; then
     IS_TERMUX=1
 fi
 

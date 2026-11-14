@@ -560,7 +560,11 @@ python3 -m http.server 8000 --directory docs
 - **Gömülü yollar:** bootstrap ikilileri `com.termux` yoluna göre derlenmiştir. Kurulum sırasında
   `TermuxInstaller` zip'ten çıkan dosyalardaki ve symlink hedeflerindeki bu yolu yeni önekle değiştirir;
   yeni yol daha kısa olduğu için değişiklik **NUL ile biten yol dizgisi içinde** yapılır ve artan baytlar
-  sıfırlanır — böylece dosya boyutu ve ELF offset'leri korunur. Bayt bayt kaydırma ikilileri bozuyordu
+  sıfırlanır — böylece dosya boyutu ve ELF offset'leri korunur. Değiştirilen yol kök veri klasörüdür
+  (`/data/data/com.termux` → `/data/data/com.mio`), çünkü bootstrap'ın ikinci aşaması `$HOME` gibi
+  `.../files/home` yollarını da kullanır. Kurulu bir önek bulunursa sıfırdan çıkarılmaz: dosyalar yerinde
+  yeniden yamalanır ve `$PREFIX/bin/sh` çalıştırılarak öneğin sağlam olduğu doğrulanır; çalışmıyorsa
+  bootstrap yeniden kurulur. Bayt bayt kaydırma ikilileri bozuyordu
   (`empty/missing DT_HASH`). Bir işaret dosyası (`files/.bootstrap-patch`) tutulur; eski/bozuk önek
   bulunursa silinip yeniden çıkarılır.
 - **Veri geçişi:** eski `com.termux` kurulumunun `files/home` klasörü (projeler, `~/.mio`, `~/.termux`) yeni klasöre kopyalanır

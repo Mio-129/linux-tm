@@ -67,12 +67,13 @@ final class TermuxInstaller {
     private static final String LOG_TAG = "TermuxInstaller";
 
     /**
-     * The path the bootstrap binaries are built with. This fork installs the prefix to its own data
-     * directory ({@link TermuxConstants#TERMUX_PREFIX_DIR_PATH}), so every occurrence of this path
-     * inside the extracted files is replaced while the bootstrap is installed, otherwise the
-     * shebangs, the symlinks and apt would point to a directory the app can not write to.
+     * The data directory path the bootstrap binaries are built with. This fork installs everything to
+     * its own data directory ({@link TermuxConstants#TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH}), so
+     * every occurrence of this path inside the extracted files is replaced while the bootstrap is
+     * installed, otherwise the shebangs, the `$PREFIX`/`$HOME` paths of the scripts, the symlinks and
+     * apt would point to a directory the app can not write to.
      */
-    private static final String LEGACY_PREFIX = TermuxConstants.TERMUX_LEGACY_PREFIX_DIR_PATH;
+    private static final String LEGACY_PREFIX = TermuxConstants.TERMUX_LEGACY_DATA_DIR_PATH;
 
     /** Files bigger than this are not patched in place, they are binaries anyway. */
     private static final long MAX_PATCH_FILE_SIZE = 16L * 1024 * 1024;
@@ -86,7 +87,7 @@ final class TermuxInstaller {
     private static final String PATCH_MARKER_FILE_PATH = TermuxConstants.TERMUX_FILES_DIR_PATH + "/.bootstrap-patch";
 
     /** Bumped when the patching changes, so that the prefix is rebuilt once. */
-    private static final String PATCH_VERSION = "com.mio-prefix-2";
+    private static final String PATCH_VERSION = "com.mio-prefix-3";
 
     /** Performs bootstrap setup if necessary. */
     static void setupBootstrapIfNeeded(final Activity activity, final Runnable whenDone) {
@@ -129,14 +130,27 @@ final class TermuxInstaller {
             return;
         }
 
-        // A prefix that was extracted before the prefix patching changed is not usable: its binaries
-        // were rewritten as raw bytes and can not be loaded. Extract it again.
-        if (FileUtils.directoryFileExists(TERMUX_PREFIX_DIR_PATH, true) && !isPatchUpToDate()
-            && !TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
-            Logger.logInfo(LOG_TAG, "The prefix \"" + TERMUX_PREFIX_DIR_PATH + "\" was extracted with an older patch, deleting it to extract the bootstrap again.");
-            Error deleteError = FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
-            if (deleteError != null) {
-                Logger.logErrorExtended(LOG_TAG, "Failed to delete the outdated prefix:\n" + deleteError.getErrorLogString());
+        // A prefix that was extracted before the prefix patching changed may still point to the Termux
+        // data directory, which this app can not write to. The files are patched again in place, since
+        // extracting the whole bootstrap again would throw away the packages the user installed.
+        if (FileUtils.directoryFileExists(TERMUX_PREFIX_DIR_PATH, true) && !isPatchUpToDate()) {
+            if (TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
+                Logger.logInfo(LOG_TAG, "The prefix directory is empty, extracting the bootstrap.");
+            } else {
+                Logger.logInfo(LOG_TAG, "Patching the existing prefix \"" + TERMUX_PREFIX_DIR_PATH + "\" for the current paths.");
+                repatchInstalledPrefix();
+
+                if (isPrefixUsable()) {
+                    writePatchMarker();
+                    whenDone.run();
+                    return;
+                }
+
+                Logger.logInfo(LOG_TAG, "The existing prefix is not usable, extracting the bootstrap again.");
+                Error deleteError = FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+                if (deleteError != null) {
+                    Logger.logErrorExtended(LOG_TAG, "Failed to delete the outdated prefix:\n" + deleteError.getErrorLogString());
+                }
             }
         }
 
@@ -284,6 +298,39 @@ final class TermuxInstaller {
         }.start();
     }
 
+    /**
+     * Patch the files of an already installed prefix: the shell is run once for every text file and
+     * the binaries are patched byte wise, so that a prefix extracted with an older patch keeps the
+     * installed packages but gets the new paths.
+     */
+    private static void repatchInstalledPrefix() {
+        patchLegacyPaths(TERMUX_PREFIX_DIR);
+        // `$HOME` and `~/.termux` of the second stage script of the bootstrap
+        patchLegacyPaths(TermuxConstants.TERMUX_FILES_DIR);
+    }
+
+    /**
+     * @return {@code true} if the prefix contains a shell that can actually be executed, i.e. the
+     * binaries of the prefix were patched correctly and not shifted byte by byte.
+     */
+    private static boolean isPrefixUsable() {
+        File sh = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "sh");
+        if (!sh.isFile()) return false;
+        try {
+            Process process = new ProcessBuilder(sh.getAbsolutePath(), "-c", "echo mio-ok")
+                .redirectErrorStream(true).start();
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(process.getInputStream(), "UTF-8"));
+            String line = reader.readLine();
+            boolean finished = process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+            process.destroy();
+            return finished && line != null && line.trim().equals("mio-ok");
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to check the prefix: " + e.getMessage());
+            return false;
+        }
+    }
+
     /** @return {@code true} if the prefix was extracted with the current patching. */
     private static boolean isPatchUpToDate() {
         File marker = new File(PATCH_MARKER_FILE_PATH);
@@ -315,8 +362,8 @@ final class TermuxInstaller {
      * the shebangs of the scripts in `bin`, the `$PREFIX` paths inside them and the `rpath`/`DT_NEEDED`
      * entries of the ELF binaries point to the data directory of this app.
      *
-     * The new path is shorter than the old one (`/data/data/com.mio/files/usr` is 28 bytes,
-     * `/data/data/com.termux/files/usr` is 31), so a path is never rewritten as raw bytes: every
+     * The new path is shorter than the old one (`/data/data/com.mio` is 17 bytes,
+     * `/data/data/com.termux` is 21), so a path is never rewritten as raw bytes: every
      * occurrence is replaced inside its NUL terminated string and the remaining bytes of that string
      * are zeroed. That keeps the size and the offsets of the file, which is what the ELF loader
      * needs; rewriting the bytes one to one would corrupt the binary ("empty/missing DT_HASH").
@@ -340,7 +387,7 @@ final class TermuxInstaller {
         byte[] current;
         try {
             legacy = LEGACY_PREFIX.getBytes("UTF-8");
-            current = TERMUX_PREFIX_DIR_PATH.getBytes("UTF-8");
+            current = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH.getBytes("UTF-8");
         } catch (Exception e) {
             return;
         }
@@ -455,11 +502,11 @@ final class TermuxInstaller {
         return out.toByteArray();
     }
 
-    /** Rewrite a single path string that points into the legacy prefix, e.g. a symlink target. */
+    /** Rewrite a single path string that points into the legacy data directory, e.g. a symlink target. */
     @NonNull
     private static String rewriteLegacyPath(@NonNull String path) {
         if (path.startsWith(LEGACY_PREFIX)) {
-            return TERMUX_PREFIX_DIR_PATH + path.substring(LEGACY_PREFIX.length());
+            return TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH + path.substring(LEGACY_PREFIX.length());
         }
         return path;
     }

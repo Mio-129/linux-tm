@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/data/data/com.mio/files/usr/bin/bash
 #
 # build.sh - Bu depoyu (linux-tm) Termux içinde derler ve istenirse APK'yı kurar.
 #

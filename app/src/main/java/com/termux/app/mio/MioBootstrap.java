@@ -166,8 +166,8 @@ public final class MioBootstrap {
      * same length in the standard case, so the file is only rewritten when it is really different.
      */
     private static void rewritePrefixPaths(@NonNull File file) {
-        final String legacy = TermuxConstants.TERMUX_LEGACY_PREFIX_DIR_PATH;
-        final String current = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+        final String legacy = TermuxConstants.TERMUX_LEGACY_DATA_DIR_PATH;
+        final String current = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
         if (legacy.equals(current)) return;
 
         try {
