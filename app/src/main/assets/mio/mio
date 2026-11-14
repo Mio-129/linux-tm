@@ -581,6 +581,9 @@ diagnose() {
     printf 'mio sürüm: 9 (menü, ses, paketler, istek dosyası, güvenli depo, pkg/apt sarmalayıcı v9)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
+    app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
+    printf 'Kurulu uygulama sürümü: %s\n' "${app_version:-bilinmiyor}"
+    printf 'mio betiği tarihi: %s\n' "$(ls -l "$PREFIX/bin/mio" 2>/dev/null | awk '{print $6, $7, $8}')"
     printf '\nKurulu komutlar:\n'
     for cmd in swset so mio; do
         path="$PREFIX/bin/$cmd"
