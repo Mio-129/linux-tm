@@ -558,9 +558,11 @@ python3 -m http.server 8000 --directory docs
   uygulama yalnızca kendi veri klasörüne yazabildiği için önek `com.termux` yolundan taşındı; aksi
   hâlde bootstrap hiç kurulamıyordu ("Unable to install bootstrap").
 - **Gömülü yollar:** bootstrap ikilileri `com.termux` yoluna göre derlenmiştir. Kurulum sırasında
-  `TermuxInstaller` zip'ten çıkan dosyalardaki (shebang'ler, `$PREFIX` değişkenleri, apt yapılandırması)
-  ve symlink hedeflerindeki bu yol yeni önekle değiştirilir; `MioBootstrap` da `mio`/`so`/`swset`
-  betiklerini kurarken aynısını yapar.
+  `TermuxInstaller` zip'ten çıkan dosyalardaki ve symlink hedeflerindeki bu yolu yeni önekle değiştirir;
+  yeni yol daha kısa olduğu için değişiklik **NUL ile biten yol dizgisi içinde** yapılır ve artan baytlar
+  sıfırlanır — böylece dosya boyutu ve ELF offset'leri korunur. Bayt bayt kaydırma ikilileri bozuyordu
+  (`empty/missing DT_HASH`). Bir işaret dosyası (`files/.bootstrap-patch`) tutulur; eski/bozuk önek
+  bulunursa silinip yeniden çıkarılır.
 - **Veri geçişi:** eski `com.termux` kurulumunun `files/home` klasörü (projeler, `~/.mio`, `~/.termux`) yeni klasöre kopyalanır
   (`MioDataMigration`). İlk açılışta arka planda denenir; elle çalıştırmak için
   **Terminal araçları > Veriler > "Eski verileri taşı"**. Mevcut dosyaların üzerine yazılmaz, başarılı

@@ -75,7 +75,18 @@ final class TermuxInstaller {
     private static final String LEGACY_PREFIX = TermuxConstants.TERMUX_LEGACY_PREFIX_DIR_PATH;
 
     /** Files bigger than this are not patched in place, they are binaries anyway. */
-    private static final long MAX_PATCH_FILE_SIZE = 8L * 1024 * 1024;
+    private static final long MAX_PATCH_FILE_SIZE = 16L * 1024 * 1024;
+
+    /**
+     * Written after the bootstrap was extracted and patched with {@link #PATCH_VERSION}. The builds
+     * before the prefix was moved to the data directory of this app extracted the bootstrap with
+     * the (longer) legacy path rewritten as raw bytes, which corrupted every binary and left a
+     * prefix that can not be run. If the marker is missing, the prefix is extracted again.
+     */
+    private static final String PATCH_MARKER_FILE_PATH = TermuxConstants.TERMUX_FILES_DIR_PATH + "/.bootstrap-patch";
+
+    /** Bumped when the patching changes, so that the prefix is rebuilt once. */
+    private static final String PATCH_VERSION = "com.mio-prefix-2";
 
     /** Performs bootstrap setup if necessary. */
     static void setupBootstrapIfNeeded(final Activity activity, final Runnable whenDone) {
@@ -116,6 +127,17 @@ final class TermuxInstaller {
                 activity.getString(R.string.bootstrap_error_title),
                 bootstrapErrorMessage, null);
             return;
+        }
+
+        // A prefix that was extracted before the prefix patching changed is not usable: its binaries
+        // were rewritten as raw bytes and can not be loaded. Extract it again.
+        if (FileUtils.directoryFileExists(TERMUX_PREFIX_DIR_PATH, true) && !isPatchUpToDate()
+            && !TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
+            Logger.logInfo(LOG_TAG, "The prefix \"" + TERMUX_PREFIX_DIR_PATH + "\" was extracted with an older patch, deleting it to extract the bootstrap again.");
+            Error deleteError = FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+            if (deleteError != null) {
+                Logger.logErrorExtended(LOG_TAG, "Failed to delete the outdated prefix:\n" + deleteError.getErrorLogString());
+            }
         }
 
         // If prefix directory exists, even if its a symlink to a valid directory and symlink is not broken/dangling
@@ -236,6 +258,7 @@ final class TermuxInstaller {
                     }
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
+                    writePatchMarker();
 
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
@@ -261,10 +284,42 @@ final class TermuxInstaller {
         }.start();
     }
 
+    /** @return {@code true} if the prefix was extracted with the current patching. */
+    private static boolean isPatchUpToDate() {
+        File marker = new File(PATCH_MARKER_FILE_PATH);
+        if (!marker.isFile()) return false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.FileInputStream(marker), "UTF-8"))) {
+            String line = reader.readLine();
+            return line != null && line.trim().equals(PATCH_VERSION);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void writePatchMarker() {
+        File marker = new File(PATCH_MARKER_FILE_PATH);
+        File parent = marker.getParentFile();
+        if (parent != null && !parent.isDirectory()) {
+            //noinspection ResultOfMethodCallIgnored
+            parent.mkdirs();
+        }
+        try (FileOutputStream out = new FileOutputStream(marker)) {
+            out.write((PATCH_VERSION + "\n").getBytes("UTF-8"));
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to write the patch marker: " + e.getMessage());
+        }
+    }
+
     /**
      * Replace the legacy prefix path of the Termux binaries with the prefix of this fork, so that
-     * the shebangs of the scripts in `bin`, the `$PREFIX` paths inside them and the `apt`
-     * configuration point to the data directory of this app.
+     * the shebangs of the scripts in `bin`, the `$PREFIX` paths inside them and the `rpath`/`DT_NEEDED`
+     * entries of the ELF binaries point to the data directory of this app.
+     *
+     * The new path is shorter than the old one (`/data/data/com.mio/files/usr` is 28 bytes,
+     * `/data/data/com.termux/files/usr` is 31), so a path is never rewritten as raw bytes: every
+     * occurrence is replaced inside its NUL terminated string and the remaining bytes of that string
+     * are zeroed. That keeps the size and the offsets of the file, which is what the ELF loader
+     * needs; rewriting the bytes one to one would corrupt the binary ("empty/missing DT_HASH").
      */
     private static void patchLegacyPaths(@NonNull File directory) {
         File[] children = directory.listFiles();
@@ -279,13 +334,13 @@ final class TermuxInstaller {
         }
     }
 
-    /** Rewrite the legacy path inside a single file, keeping the executable bit. */
+    /** Rewrite the legacy path inside a single file, keeping the size and the executable bit. */
     private static void patchLegacyPathInFile(@NonNull File file) {
-        byte[] oldBytes;
-        byte[] newBytes;
+        byte[] legacy;
+        byte[] current;
         try {
-            oldBytes = LEGACY_PREFIX.getBytes("UTF-8");
-            newBytes = TERMUX_PREFIX_DIR_PATH.getBytes("UTF-8");
+            legacy = LEGACY_PREFIX.getBytes("UTF-8");
+            current = TERMUX_PREFIX_DIR_PATH.getBytes("UTF-8");
         } catch (Exception e) {
             return;
         }
@@ -297,9 +352,11 @@ final class TermuxInstaller {
             Logger.logWarn(LOG_TAG, "Failed to read \"" + file.getAbsolutePath() + "\": " + e.getMessage());
             return;
         }
-        if (content == null || indexOf(content, oldBytes, 0) < 0) return;
+        if (content == null || indexOf(content, legacy, 0) < 0) return;
 
-        byte[] patched = replaceAll(content, oldBytes, newBytes);
+        byte[] patched = replaceInsideNullTerminatedStrings(content, legacy, current);
+        if (patched == null) return;
+
         boolean executable = file.canExecute();
         try (OutputStream out = new FileOutputStream(file)) {
             out.write(patched);
@@ -311,24 +368,63 @@ final class TermuxInstaller {
             //noinspection ResultOfMethodCallIgnored
             file.setExecutable(true, false);
         }
+        Logger.logDebug(LOG_TAG, "Patched \"" + file.getAbsolutePath() + "\"");
+    }
+
+    /**
+     * Replace {@code from} with {@code to} inside every NUL terminated string of the content, where
+     * {@code to} is shorter than {@code from}, and zero the unused bytes at the end of the string.
+     *
+     * @return The patched content of the same length as the original, or {@code null} if the
+     * replacement would not fit.
+     */
+    @Nullable
+    private static byte[] replaceInsideNullTerminatedStrings(@NonNull byte[] content,
+                                                             @NonNull byte[] from,
+                                                             @NonNull byte[] to) {
+        if (to.length > from.length) return null;
+
+        byte[] result = content.clone();
+        int searchFrom = 0;
+        while (true) {
+            int found = indexOf(result, from, searchFrom);
+            if (found < 0) break;
+
+            // Bounds of the NUL terminated string that contains the path
+            int start = found;
+            while (start > 0 && result[start - 1] != 0) start--;
+            int end = found;
+            while (end < result.length && result[end] != 0) end++;
+
+            byte[] token = new byte[end - start];
+            System.arraycopy(result, start, token, 0, token.length);
+            byte[] replaced = replaceAll(token, from, to);
+            if (replaced.length > token.length) return null;
+
+            System.arraycopy(replaced, 0, result, start, replaced.length);
+            for (int i = start + replaced.length; i < end; i++) result[i] = 0;
+
+            searchFrom = end;
+        }
+        return result;
     }
 
     @Nullable
     private static byte[] readAllBytes(@NonNull File file) throws Exception {
+        long size = file.length();
+        if (size > MAX_PATCH_FILE_SIZE) return null;
+        byte[] buffer = new byte[(int) size];
+        int offset = 0;
         try (InputStream in = new java.io.FileInputStream(file)) {
-            long size = file.length();
-            if (size > MAX_PATCH_FILE_SIZE) return null;
-            byte[] buffer = new byte[(int) size];
-            int offset = 0;
             int read;
             while (offset < buffer.length && (read = in.read(buffer, offset, buffer.length - offset)) > 0) {
                 offset += read;
             }
-            if (offset == buffer.length) return buffer;
-            byte[] shorter = new byte[offset];
-            System.arraycopy(buffer, 0, shorter, 0, offset);
-            return shorter;
         }
+        if (offset == buffer.length) return buffer;
+        byte[] shorter = new byte[offset];
+        System.arraycopy(buffer, 0, shorter, 0, offset);
+        return shorter;
     }
 
     private static int indexOf(@NonNull byte[] haystack, @NonNull byte[] needle, int from) {
@@ -344,7 +440,7 @@ final class TermuxInstaller {
 
     @NonNull
     private static byte[] replaceAll(@NonNull byte[] content, @NonNull byte[] from, @NonNull byte[] to) {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(content.length + 1024);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(content.length + 64);
         int index = 0;
         while (true) {
             int found = indexOf(content, from, index);
@@ -359,7 +455,7 @@ final class TermuxInstaller {
         return out.toByteArray();
     }
 
-    /** Rewrite a single path string that points into the legacy prefix. */
+    /** Rewrite a single path string that points into the legacy prefix, e.g. a symlink target. */
     @NonNull
     private static String rewriteLegacyPath(@NonNull String path) {
         if (path.startsWith(LEGACY_PREFIX)) {
