@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # so - `swset` ile arka plana konan videonun sesini açar/kapatır.
 #
@@ -20,7 +20,7 @@
 #     (video.mp4 + video.mp3 gibi) o dosya çalınır.
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 ACTION_SET_AUDIO="com.termux.mio.action.SET_AUDIO"

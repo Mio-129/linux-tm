@@ -26,10 +26,10 @@ import java.util.Map;
  * <pre>
  * created=1730000000
  * command=swset
- * name=/data/data/com.termux/files/home/photo.png
+ * name=" + TermuxConstants.TERMUX_HOME_DIR_PATH + "/photo.png
  * media_type=image
  * audio=0
- * dir=/data/data/com.termux/files/home
+ * dir=" + TermuxConstants.TERMUX_HOME_DIR_PATH + "
  * </pre>
  */
 public final class MioRequest {

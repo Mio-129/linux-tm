@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # Older-Tool — ikinci aşama betiği (.b.sh)
 #
@@ -17,7 +17,7 @@ AD="Older-Tool"
 say() { printf '[%s] %s\n' "$AD" "$*"; }
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 say "ikinci aşama başladı ($(date 2>/dev/null))"
@@ -78,7 +78,7 @@ mkdir -p "$HOME/.local/bin" || {
 YARDIMCI="$HOME/.local/bin/mio-bilgi"
 if [ ! -x "$YARDIMCI" ]; then
     cat > "$YARDIMCI" <<'EOF'
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 # Older-Tool tarafından oluşturuldu: kısa sistem bilgisi
 echo "Termux : ${PREFIX:-?}"
 echo "Ev     : $HOME"

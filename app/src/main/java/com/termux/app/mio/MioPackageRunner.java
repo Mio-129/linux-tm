@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -32,10 +33,10 @@ public final class MioPackageRunner {
     public static final String LOG_TAG = "MioPackageRunner";
 
     /** The folder the scripts are run in, since they may use relative paths. */
-    private static final String HOME_DIR_PATH = "/data/data/com.termux/files/home";
+    private static final String HOME_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH;
 
     /** The shell that runs the scripts. */
-    private static final String SHELL_PATH = "/data/data/com.termux/files/usr/bin/sh";
+    private static final String SHELL_PATH = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh";
 
     /** If a package or a start-up script is being run, so that a run is not started twice. */
     private static boolean sRunning = false;
@@ -215,12 +216,12 @@ public final class MioPackageRunner {
             try {
                 // The environment of the app is not the environment of the terminal, so the paths
                 // of the bootstrap are added, since the scripts use `pkg`, `apt`, `$PREFIX`, ...
-                builder.environment().put("PREFIX", "/data/data/com.termux/files/usr");
+                builder.environment().put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
                 builder.environment().put("HOME", HOME_DIR_PATH);
-                builder.environment().put("TMPDIR", "/data/data/com.termux/files/usr/tmp");
-                builder.environment().put("PATH", "/data/data/com.termux/files/usr/bin:"
-                    + "/data/data/com.termux/files/usr/bin/applets:/system/bin:/system/xbin");
-                builder.environment().put("LD_LIBRARY_PATH", "/data/data/com.termux/files/usr/lib");
+                builder.environment().put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+                builder.environment().put("PATH", "" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin:"
+                    + "" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/applets:/system/bin:/system/xbin");
+                builder.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
                 builder.environment().put("LANG", "en_US.UTF-8");
                 builder.environment().put("TERM", "xterm-256color");
 
@@ -314,7 +315,7 @@ public final class MioPackageRunner {
      * The commands of the template only print what a real package would do, so that it can be run
      * without installing anything, replace them with the commands of the package.
      */
-    private static final String TEMPLATE_A_SCRIPT = "#!/data/data/com.termux/files/usr/bin/sh\n"
+    private static final String TEMPLATE_A_SCRIPT = "#!" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh\n"
         + "#\n"
         + "# Older-Pack — birinci aşama betiği (.a.sh)\n"
         + "#\n"
@@ -340,7 +341,7 @@ public final class MioPackageRunner {
     /**
      * The `Older-Tool.b.sh` template, run only after the `.a.sh` script of the package succeeded.
      */
-    private static final String TEMPLATE_B_SCRIPT = "#!/data/data/com.termux/files/usr/bin/sh\n"
+    private static final String TEMPLATE_B_SCRIPT = "#!" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh\n"
         + "#\n"
         + "# Older-Tool — ikinci aşama betiği (.b.sh)\n"
         + "#\n"
@@ -358,7 +359,7 @@ public final class MioPackageRunner {
     /**
      * The `Older-Pack.start-up.sh` template, run on every start of the app and after an update.
      */
-    private static final String TEMPLATE_STARTUP_SCRIPT = "#!/data/data/com.termux/files/usr/bin/sh\n"
+    private static final String TEMPLATE_STARTUP_SCRIPT = "#!" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh\n"
         + "#\n"
         + "# Older-Pack — başlangıç betiği (.start-up.sh)\n"
         + "#\n"

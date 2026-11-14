@@ -25,6 +25,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -113,7 +114,7 @@ public final class MioEditorActivity extends Activity {
             }
         }
 
-        File home = new File("/data/data/com.termux/files/home");
+        File home = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
         File[] homeFiles = home.listFiles((dir, name) -> name.endsWith(".sh"));
         if (homeFiles != null) {
             for (File file : homeFiles) files.add(file);
@@ -536,7 +537,7 @@ public final class MioEditorActivity extends Activity {
             return "php " + path;
         }
         if (lowerCase.endsWith(".c") || lowerCase.endsWith(".cpp") || lowerCase.endsWith(".cc")) {
-            String binary = "/data/data/com.termux/files/usr/tmp/mio-run-"
+            String binary = TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH + "/mio-run-"
                 + Math.abs(name.hashCode());
             return "cc -O0 -o " + binary + " " + path + " && " + binary
                 + "; status=$?; rm -f " + binary + "; exit $status";
@@ -544,7 +545,7 @@ public final class MioEditorActivity extends Activity {
         if (lowerCase.endsWith(".java")) {
             String className = name.substring(0, name.length() - ".java".length());
             String directory = mFile.getParentFile() == null
-                ? "/data/data/com.termux/files/home" : mFile.getParentFile().getAbsolutePath();
+                ? TermuxConstants.TERMUX_HOME_DIR_PATH : mFile.getParentFile().getAbsolutePath();
             return "cd " + MioPackages.quote(directory) + " && javac " + MioPackages.quote(name)
                 + " && java " + MioPackages.quote(className);
         }
@@ -584,7 +585,7 @@ public final class MioEditorActivity extends Activity {
         StringBuilder output = new StringBuilder();
         try {
             List<String> commandLine = new ArrayList<>();
-            commandLine.add("/data/data/com.termux/files/usr/bin/sh");
+            commandLine.add(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh");
             commandLine.add("-c");
             commandLine.add(command);
 
@@ -593,12 +594,12 @@ public final class MioEditorActivity extends Activity {
             if (directory != null) builder.directory(directory);
             builder.redirectErrorStream(true);
 
-            builder.environment().put("PREFIX", "/data/data/com.termux/files/usr");
-            builder.environment().put("HOME", "/data/data/com.termux/files/home");
-            builder.environment().put("TMPDIR", "/data/data/com.termux/files/usr/tmp");
-            builder.environment().put("PATH", "/data/data/com.termux/files/usr/bin:"
-                + "/data/data/com.termux/files/usr/bin/applets:/system/bin:/system/xbin");
-            builder.environment().put("LD_LIBRARY_PATH", "/data/data/com.termux/files/usr/lib");
+            builder.environment().put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+            builder.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
+            builder.environment().put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+            builder.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":"
+                + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets:/system/bin:/system/xbin");
+            builder.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
             builder.environment().put("LANG", "en_US.UTF-8");
             builder.environment().put("TERM", "xterm-256color");
 

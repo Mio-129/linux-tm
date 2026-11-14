@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -27,8 +28,8 @@ import java.util.List;
  * `/data/data/com.termux`. Android gives every app its own `/data/data` directory, so the old files
  * are not readable by the new app any more. They are copied before the old app is uninstalled.
  *
- * The prefix (`$PREFIX`) **stays** at `/data/data/com.termux/files/usr`, since the bootstrap
- * binaries have that path hardcoded, so only the home folder and the app data are migrated.
+ * Only the home folder and the app data are migrated: the prefix of this fork lives inside the data
+ * directory of the app and is installed by the bootstrap (the old `usr` folder can not be read).
  *
  * The migration is marked as done in {@link #MARKER_FILE_PATH}, so it never runs twice, and it also
  * runs when the app is started after the old files were copied but before the marker was written.

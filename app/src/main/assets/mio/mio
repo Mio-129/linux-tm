@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # mio - Termux'un bu çatalının (fork) menüsünü ve ayarlarını terminalden yönetir.
 #
@@ -27,7 +27,7 @@
 #   * Ekran görüntüsü/medya komutları için: swset <dosya>, swset off, so, so off.
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 ACTION_MENU="com.termux.mio.action.MENU"
@@ -128,7 +128,7 @@ diagnose() {
     printf 'Uygulama verisi: /data/data/com.mio  (dosya yöneticisinde Android/data/com.mio)\n'
     if [ -f /data/data/com.mio/files/.mio-migrated ]; then
         printf 'Eski com.termux verileri: taşındı (%s)\n' "$(cat /data/data/com.mio/files/.mio-migrated 2>/dev/null)"
-    elif [ -d /data/data/com.termux/files/home ]; then
+    elif [ -d /data/data/com.mio/files/home ]; then
         printf 'Eski com.termux verileri: TAŞINMADI - menü > Veriler > "Eski verileri taşı"\n'
     else
         printf 'Eski com.termux verileri: yok\n'
@@ -382,7 +382,7 @@ pkg_create_template() {
     dir="$PKG_DIR/Older-Pack"
     if [ ! -f "$dir/Older-Pack.a.sh" ]; then
         cat > "$dir/Older-Pack.a.sh" <<'MIO_EOF'
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 # Older-Pack — birinci aşama betiği (.a.sh), kurulacak komutlar buraya yazılır
 set -u
 echo "Older-Pack: birinci aşama başladı"
@@ -394,7 +394,7 @@ MIO_EOF
     fi
     if [ ! -f "$dir/Older-Tool.b.sh" ]; then
         cat > "$dir/Older-Tool.b.sh" <<'MIO_EOF'
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 # Older-Tool — ikinci aşama betiği (.b.sh), .a.sh başarılı olursa çalışır
 set -u
 echo "Older-Tool: ikinci aşama başladı"
@@ -404,7 +404,7 @@ MIO_EOF
     fi
     if [ ! -f "$dir/Older-Pack.start-up.sh" ]; then
         cat > "$dir/Older-Pack.start-up.sh" <<'MIO_EOF'
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 # Older-Pack — başlangıç betiği (.start-up.sh), Termux her açıldığında çalışır
 set -u
 echo "Older-Pack: start-up çalıştı ($(date 2>/dev/null))"
@@ -452,7 +452,7 @@ Tam ekran|mio tam ekran
 Ses açma tuşu menüsü|mio ses
 Paketleri listele|mio paket
 Paketleri güncelle|mio paket guncelle
-Yedek al|cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C /data/data/com.termux/files home usr
+Yedek al|cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C /data/data/com.mio/files home usr
 Depo değiştir|termux-change-repo
 Teşhis|mio teshis
 MIO_EOF

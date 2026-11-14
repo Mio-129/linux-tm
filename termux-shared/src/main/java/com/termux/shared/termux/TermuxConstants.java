@@ -594,15 +594,23 @@ public final class TermuxConstants {
     /**
      * Termux app $PREFIX directory path.
      *
-     * The app of this fork is installed as "com.mio", so the data of the app is in
-     * "/data/data/com.mio", which is what the user sees as "Android/data/com.mio".
+     * This fork is installed as "com.mio", so the prefix lives in the data directory of the app,
+     * "/data/data/com.mio/files/usr", which the user sees as "Android/data/com.mio".
      *
-     * The binaries of the bootstrap have the old "/data/data/com.termux/files/usr" path hardcoded
-     * in them (the shebangs of the shell scripts, the symlinks of the libraries and apt), so the
-     * prefix stays at the Termux path; otherwise the installed packages would not be able to run.
-     * The same path is used by the `mio` command script and by every command the panel runs.
+     * The prefix moved away from the Termux path "/data/data/com.termux/files/usr" because an app
+     * can only write inside its own data directory: with the old path the bootstrap could not be
+     * extracted ("Unable to install bootstrap"). The binaries of the bootstrap have the old path
+     * hardcoded (shebangs of the scripts, symlinks of the libraries, apt), so those paths are
+     * rewritten while the bootstrap is extracted and when the commands are installed, see
+     * {@link #TERMUX_LEGACY_PREFIX_DIR_PATH} and `TermuxInstaller` / `MioBootstrap`.
      */
-    public static final String TERMUX_PREFIX_DIR_PATH = "/data/data/com.termux/files/usr"; // Default: "/data/data/com.termux/files/usr"
+    public static final String TERMUX_PREFIX_DIR_PATH = TERMUX_FILES_DIR_PATH + "/usr"; // Default: "/data/data/com.termux/files/usr"
+
+    /** The prefix path of the original Termux app, which the bootstrap binaries are built with. */
+    public static final String TERMUX_LEGACY_PREFIX_DIR_PATH = "/data/data/com.termux/files/usr";
+
+    /** The home path of the original Termux app, used by the data migration of the fork. */
+    public static final String TERMUX_LEGACY_HOME_DIR_PATH = "/data/data/com.termux/files/home";
     /** Termux app $PREFIX directory */
     public static final File TERMUX_PREFIX_DIR = new File(TERMUX_PREFIX_DIR_PATH);
 

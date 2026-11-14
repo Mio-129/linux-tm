@@ -44,13 +44,13 @@ public final class MioPackages {
     public static final String LOG_TAG = "MioPackages";
 
     /** The folder that contains one folder per package. */
-    public static final String PACKAGE_DIR_PATH = "/data/data/com.termux/files/home/.mio/pkgs";
+    public static final String PACKAGE_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.mio/pkgs";
 
     /** The folder of the install state of the packages. */
-    public static final String STATE_DIR_PATH = "/data/data/com.termux/files/home/.mio/state";
+    public static final String STATE_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.mio/state";
 
     /** The folder of the logs of the packages. */
-    public static final String LOG_DIR_PATH = "/data/data/com.termux/files/home/.mio/log";
+    public static final String LOG_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.mio/log";
 
     /** The suffix of the first script of a package, the "Older-Pack" script. */
     public static final String SCRIPT_A_SUFFIX = ".a.sh";

@@ -27,11 +27,16 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR;
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH;
@@ -60,6 +65,17 @@ import static com.termux.shared.termux.TermuxConstants.TERMUX_STAGING_PREFIX_DIR
 final class TermuxInstaller {
 
     private static final String LOG_TAG = "TermuxInstaller";
+
+    /**
+     * The path the bootstrap binaries are built with. This fork installs the prefix to its own data
+     * directory ({@link TermuxConstants#TERMUX_PREFIX_DIR_PATH}), so every occurrence of this path
+     * inside the extracted files is replaced while the bootstrap is installed, otherwise the
+     * shebangs, the symlinks and apt would point to a directory the app can not write to.
+     */
+    private static final String LEGACY_PREFIX = TermuxConstants.TERMUX_LEGACY_PREFIX_DIR_PATH;
+
+    /** Files bigger than this are not patched in place, they are binaries anyway. */
+    private static final long MAX_PATCH_FILE_SIZE = 8L * 1024 * 1024;
 
     /** Performs bootstrap setup if necessary. */
     static void setupBootstrapIfNeeded(final Activity activity, final Runnable whenDone) {
@@ -167,7 +183,7 @@ final class TermuxInstaller {
                                     String[] parts = line.split("←");
                                     if (parts.length != 2)
                                         throw new RuntimeException("Malformed symlink line: " + line);
-                                    String oldPath = parts[0];
+                                    String oldPath = rewriteLegacyPath(parts[0]);
                                     String newPath = TERMUX_STAGING_PREFIX_DIR_PATH + "/" + parts[1];
                                     symlinks.add(Pair.create(oldPath, newPath));
 
@@ -203,6 +219,9 @@ final class TermuxInstaller {
                             }
                         }
                     }
+
+                    Logger.logInfo(LOG_TAG, "Patching the bootstrap files for the prefix \"" + TERMUX_PREFIX_DIR_PATH + "\".");
+                    patchLegacyPaths(TERMUX_STAGING_PREFIX_DIR);
 
                     if (symlinks.isEmpty())
                         throw new RuntimeException("No SYMLINKS.txt encountered");
@@ -242,15 +261,126 @@ final class TermuxInstaller {
         }.start();
     }
 
+    /**
+     * Replace the legacy prefix path of the Termux binaries with the prefix of this fork, so that
+     * the shebangs of the scripts in `bin`, the `$PREFIX` paths inside them and the `apt`
+     * configuration point to the data directory of this app.
+     */
+    private static void patchLegacyPaths(@NonNull File directory) {
+        File[] children = directory.listFiles();
+        if (children == null) return;
+
+        for (File child : children) {
+            if (child.isDirectory()) {
+                patchLegacyPaths(child);
+            } else if (child.isFile() && child.length() <= MAX_PATCH_FILE_SIZE) {
+                patchLegacyPathInFile(child);
+            }
+        }
+    }
+
+    /** Rewrite the legacy path inside a single file, keeping the executable bit. */
+    private static void patchLegacyPathInFile(@NonNull File file) {
+        byte[] oldBytes;
+        byte[] newBytes;
+        try {
+            oldBytes = LEGACY_PREFIX.getBytes("UTF-8");
+            newBytes = TERMUX_PREFIX_DIR_PATH.getBytes("UTF-8");
+        } catch (Exception e) {
+            return;
+        }
+
+        byte[] content;
+        try {
+            content = readAllBytes(file);
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to read \"" + file.getAbsolutePath() + "\": " + e.getMessage());
+            return;
+        }
+        if (content == null || indexOf(content, oldBytes, 0) < 0) return;
+
+        byte[] patched = replaceAll(content, oldBytes, newBytes);
+        boolean executable = file.canExecute();
+        try (OutputStream out = new FileOutputStream(file)) {
+            out.write(patched);
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to patch \"" + file.getAbsolutePath() + "\": " + e.getMessage());
+            return;
+        }
+        if (executable) {
+            //noinspection ResultOfMethodCallIgnored
+            file.setExecutable(true, false);
+        }
+    }
+
+    @Nullable
+    private static byte[] readAllBytes(@NonNull File file) throws Exception {
+        try (InputStream in = new java.io.FileInputStream(file)) {
+            long size = file.length();
+            if (size > MAX_PATCH_FILE_SIZE) return null;
+            byte[] buffer = new byte[(int) size];
+            int offset = 0;
+            int read;
+            while (offset < buffer.length && (read = in.read(buffer, offset, buffer.length - offset)) > 0) {
+                offset += read;
+            }
+            if (offset == buffer.length) return buffer;
+            byte[] shorter = new byte[offset];
+            System.arraycopy(buffer, 0, shorter, 0, offset);
+            return shorter;
+        }
+    }
+
+    private static int indexOf(@NonNull byte[] haystack, @NonNull byte[] needle, int from) {
+        outer:
+        for (int i = Math.max(0, from); i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    @NonNull
+    private static byte[] replaceAll(@NonNull byte[] content, @NonNull byte[] from, @NonNull byte[] to) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(content.length + 1024);
+        int index = 0;
+        while (true) {
+            int found = indexOf(content, from, index);
+            if (found < 0) {
+                out.write(content, index, content.length - index);
+                break;
+            }
+            out.write(content, index, found - index);
+            out.write(to, 0, to.length);
+            index = found + from.length;
+        }
+        return out.toByteArray();
+    }
+
+    /** Rewrite a single path string that points into the legacy prefix. */
+    @NonNull
+    private static String rewriteLegacyPath(@NonNull String path) {
+        if (path.startsWith(LEGACY_PREFIX)) {
+            return TERMUX_PREFIX_DIR_PATH + path.substring(LEGACY_PREFIX.length());
+        }
+        return path;
+    }
+
     public static void showBootstrapErrorDialog(Activity activity, Runnable whenDone, String message) {
         Logger.logErrorExtended(LOG_TAG, "Bootstrap Error:\n" + message);
 
         // Send a notification with the exception so that the user knows why bootstrap setup failed
         sendBootstrapCrashReportNotification(activity, message);
 
+        final String details = message;
+
         activity.runOnUiThread(() -> {
             try {
-                new AlertDialog.Builder(activity).setTitle(R.string.bootstrap_error_title).setMessage(R.string.bootstrap_error_body)
+                new AlertDialog.Builder(activity).setTitle(R.string.bootstrap_error_title)
+                    .setMessage(activity.getString(R.string.bootstrap_error_body)
+                        + "\n\n" + details)
                     .setNegativeButton(R.string.bootstrap_error_abort, (dialog, which) -> {
                         dialog.dismiss();
                         activity.finish();

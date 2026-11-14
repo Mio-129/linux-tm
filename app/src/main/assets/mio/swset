@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # swset - Fotoğraf veya videoyu terminalin arkasına koyar.
 #
@@ -22,7 +22,7 @@
 # Bu betik termux-api gerektirmez, uygulamanın kendi yayın alıcısına (broadcast) komut yollar.
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 ACTION_SET="com.termux.mio.action.SET_WALLPAPER"

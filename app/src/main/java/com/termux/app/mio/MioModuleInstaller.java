@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -25,9 +26,9 @@ import java.util.zip.ZipFile;
  * {@code kaynak -> hedef -> izin}, like ZeroTermux does it:
  *
  * <pre>
- * bin/foo        -> /data/data/com.termux/files/usr/bin/foo    -> 700
+ * bin/foo        -> /data/data/com.mio/files/usr/bin/foo    -> 700
  * bin/bash.bashrc -> bash.bashrc                               -> 700
- * share/         -> /data/data/com.termux/files/usr/share/mio  -> 700
+ * share/         -> /data/data/com.mio/files/usr/share/mio  -> 700
  * </pre>
  *
  * The source is a file or a directory inside the ZIP, the target is an absolute path or, for the
@@ -44,10 +45,10 @@ public final class MioModuleInstaller {
     public static final String LOG_TAG = "MioModuleInstaller";
 
     /** The folder the modules are extracted to before they are installed. */
-    public static final String TEMP_DIR_PATH = "/data/data/com.termux/files/home/.mio/tempmodule";
+    public static final String TEMP_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.mio/tempmodule";
 
     /** The folder that the modules are copied from, shown by the module dialog. */
-    public static final String MODULE_DIR_PATH = "/data/data/com.termux/files/home/.mio/modules";
+    public static final String MODULE_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.mio/modules";
 
     /** The file of the module that lists what is installed. */
     public static final String INSTALL_FILE_NAME = "INSTALL.txt";

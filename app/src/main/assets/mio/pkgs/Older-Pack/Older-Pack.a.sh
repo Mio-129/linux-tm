@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # Older-Pack — birinci aşama betiği (.a.sh)
 #
@@ -24,7 +24,7 @@ PAKETLER="git curl wget nano less tar unzip zip python"
 # 0) Ortam kontrolü
 # ------------------------------------------------------------------------------------------
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 if [ ! -x "$PREFIX/bin/pkg" ]; then

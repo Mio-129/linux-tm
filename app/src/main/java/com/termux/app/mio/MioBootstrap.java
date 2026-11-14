@@ -15,6 +15,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -131,6 +132,8 @@ public final class MioBootstrap {
                 }
             }
 
+            rewritePrefixPaths(targetFile);
+
             if (!targetFile.setExecutable(true, false)) {
                 Logger.logWarn(LOG_TAG, "Failed to set the execute permission of \"" + targetFile.getAbsolutePath() + "\"");
             }
@@ -140,6 +143,42 @@ public final class MioBootstrap {
         } catch (IOException e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to install command \"" + command + "\"", e);
             return false;
+        }
+    }
+
+    @Nullable
+    private static String readText(@NonNull File file) {
+        StringBuilder content = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+            new InputStreamReader(new FileInputStream(file), "UTF-8"))) {
+            String line;
+            while ((line = reader.readLine()) != null) content.append(line).append('\n');
+        } catch (Exception e) {
+            return null;
+        }
+        return content.toString();
+    }
+
+    /**
+     * The scripts in the assets are written for the standard Termux prefix
+     * (`/data/data/com.termux/files/usr`). This fork installs the prefix inside its own data
+     * directory, so the path is rewritten while the script is installed. The replacement has the
+     * same length in the standard case, so the file is only rewritten when it is really different.
+     */
+    private static void rewritePrefixPaths(@NonNull File file) {
+        final String legacy = TermuxConstants.TERMUX_LEGACY_PREFIX_DIR_PATH;
+        final String current = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+        if (legacy.equals(current)) return;
+
+        try {
+            String content = readText(file);
+            if (content == null || !content.contains(legacy)) return;
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                out.write(content.replace(legacy, current).getBytes("UTF-8"));
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG,
+                "Failed to rewrite the prefix path of \"" + file.getAbsolutePath() + "\"", e);
         }
     }
 

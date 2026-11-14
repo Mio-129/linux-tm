@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/data/data/com.mio/files/usr/bin/sh
 #
 # Older-Pack — başlangıç betiği (.start-up.sh)
 #
@@ -17,7 +17,7 @@ AD="Older-Pack.start-up"
 say() { printf '[%s] %s\n' "$AD" "$*"; }
 
 if [ -z "${PREFIX:-}" ]; then
-    PREFIX=/data/data/com.termux/files/usr
+    PREFIX=/data/data/com.mio/files/usr
 fi
 
 say "çalıştı ($(date 2>/dev/null))"

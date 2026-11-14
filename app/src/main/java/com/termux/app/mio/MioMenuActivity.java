@@ -26,6 +26,7 @@ import com.termux.app.TermuxActivity;
 import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
 import java.util.List;
@@ -344,7 +345,7 @@ public final class MioMenuActivity extends Activity {
         LinearLayout toolsRow1 = newRow();
         addButton(toolsRow1, "Kaynak değiştir", v -> runCommand("termux-change-repo"));
         addButton(toolsRow1, "Yedekle", v -> runCommand(
-            "cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C /data/data/com.termux/files home usr"));
+            "cd ~ && tar -czf ~/termux-yedek-$(date +%Y%m%d-%H%M).tar.gz -C " + TermuxConstants.TERMUX_FILES_DIR_PATH + " home usr"));
         addButton(toolsRow1, "IP adresi", v -> runCommand("ifconfig 2>/dev/null || ip addr"));
         mRoot.addView(toolsRow1);
 
@@ -400,7 +401,7 @@ public final class MioMenuActivity extends Activity {
         addButton(shellRow2, "Alias'ları uygula", v -> applyAliases());
         addButton(shellRow2, "Terminal menüsü", v -> showTerminalMenuEditor());
         addButton(shellRow2, "Alt klavye tuşları", v -> MioEditorActivity.startFromContext(this,
-            "/data/data/com.termux/files/home/.termux/termux.properties"));
+            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux/termux.properties"));
         addButton(shellRow2, "Açılışta çalıştır", v -> showBootCommandDialog());
         addButton(shellRow2, "SHELL çalıştır", v -> showShellRunDialog());
         mRoot.addView(shellRow2);
@@ -645,7 +646,7 @@ public final class MioMenuActivity extends Activity {
 
     /** Yedek dosyalarını listele ve seçileni geri yükle. */
     private void showRestoreDialog() {
-        final File home = new File("/data/data/com.termux/files/home");
+        final File home = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
         final File[] files = home.listFiles((dir, name) ->
             name.startsWith("termux-yedek-") && name.endsWith(".tar.gz"));
         if (files == null || files.length == 0) {
@@ -663,7 +664,7 @@ public final class MioMenuActivity extends Activity {
                     .setTitle("Geri yüklensin mi?")
                     .setMessage(name + "\n\nMevcut home ve usr klasörlerinin üzerine yazılır.")
                     .setPositiveButton(R.string.mio_menu_apply,
-                        (d, w) -> runCommand("tar -xzf ~/" + name + " -C /data/data/com.termux/files"))
+                        (d, w) -> runCommand("tar -xzf ~/" + name + " -C " + TermuxConstants.TERMUX_FILES_DIR_PATH + ""))
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
             })
@@ -837,7 +838,7 @@ public final class MioMenuActivity extends Activity {
                 .setTitle("Modül kur")
                 .setMessage("~/.mio/modules klasörüne bir ZIP koy, içinde INSTALL.txt olsun.\n\n"
                     + "Her satır: kaynak -> hedef -> izin\n"
-                    + "örnek: bin/foo -> /data/data/com.termux/files/usr/bin/foo -> 700")
+                    + "örnek: bin/foo -> " + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/foo -> 700")
                 .setPositiveButton("Galeriden seç", (dialog, which) -> pickModuleZip())
                 .setNeutralButton("Klasörü aç", (dialog, which) -> runCommand(
                     "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"))
@@ -989,9 +990,9 @@ public final class MioMenuActivity extends Activity {
     /** Editörün açabileceği dosyalar: paket betikleri, ev dizinindeki .sh dosyaları ve ayarlar. */
     private void showFileChooser() {
         final java.util.List<File> files = MioEditorActivity.getScriptFiles();
-        files.add(new File("/data/data/com.termux/files/home/.termux/termux.properties"));
-        files.add(new File("/data/data/com.termux/files/home/.termux/colors.properties"));
-        files.add(new File("/data/data/com.termux/files/home/.bashrc"));
+        files.add(new File(TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux/termux.properties"));
+        files.add(new File(TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux/colors.properties"));
+        files.add(new File(TermuxConstants.TERMUX_HOME_DIR_PATH + "/.bashrc"));
 
         final String[] labels = new String[files.size()];
         for (int i = 0; i < files.size(); i++) {
@@ -1005,7 +1006,7 @@ public final class MioMenuActivity extends Activity {
             .setItems(labels, (dialog, which) ->
                 MioEditorActivity.startFromContext(this, files.get(which).getAbsolutePath()))
             .setNeutralButton("Yeni dosya", (dialog, which) -> showNewFileDialog(
-                new File("/data/data/com.termux/files/home"), "yeni.sh"))
+                new File(TermuxConstants.TERMUX_HOME_DIR_PATH), "yeni.sh"))
             .setNegativeButton(android.R.string.cancel, null)
             .show();
     }
@@ -1043,7 +1044,7 @@ public final class MioMenuActivity extends Activity {
     /* Proje oluştur                                                                          */
     /* -------------------------------------------------------------------------------------- */
 
-    private static final String HOME = "/data/data/com.termux/files/home";
+    private static final String HOME = TermuxConstants.TERMUX_HOME_DIR_PATH;
 
     /** Proje şablonları: klasör adı, örnek dosya adı ve içeriği. */
     private void createProject(@NonNull String type) {
@@ -1796,7 +1797,7 @@ public final class MioMenuActivity extends Activity {
                     case 0: showNewShortcutDialog(); break;
                     case 1: runCommand("ls -l ~/.mio/bin 2>/dev/null || echo 'Henüz kısayol yok'"); break;
                     default: runCommand("mkdir -p ~/.mio/bin && "
-                        + "printf '#!/data/data/com.termux/files/usr/bin/sh\ntar -czf ~/yedek-$(date +%%Y%%m%%d).tar.gz ~/projects\n' "
+                        + "printf '#!" + TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh\ntar -czf ~/yedek-$(date +%%Y%%m%%d).tar.gz ~/projects\n' "
                         + "> ~/.mio/bin/hizli-yedek && chmod +x ~/.mio/bin/hizli-yedek; echo 'hizli-yedek oluşturuldu'"); break;
                 }
             })
@@ -1972,7 +1973,7 @@ public final class MioMenuActivity extends Activity {
     /** Copy the picked file to `~/.termux/mio/media/` and set it with `swset`. */
     private void copyAndSetMedia(@NonNull Uri uri) {
         final String name = getDisplayName(uri);
-        final File directory = new File("/data/data/com.termux/files/home/.termux/mio/media");
+        final File directory = new File(TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux/mio/media");
         if (!directory.isDirectory() && !directory.mkdirs()) {
             toast("Klasör oluşturulamadı: " + directory.getAbsolutePath());
             return;

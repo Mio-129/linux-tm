@@ -554,10 +554,14 @@ python3 -m http.server 8000 --directory docs
 - **Uygulama kimliği:** `applicationId "com.mio"` (`app/build.gradle`). Java paketleri `com.termux.*`
   olarak kalır, çünkü `termux-shared` / `terminal-view` kütüphaneleri ve eklentiler o adları import eder.
 - **Uygulama verisi:** `Android/data/com.mio` = `/data/data/com.mio` (ev klasörü, `~/.mio`, `~/.termux`).
-- **Terminal öneki sabit:** `$PREFIX` hâlâ `/data/data/com.termux/files/usr`. Bootstrap ikililerinde bu
-  yol gömülü (shebang'ler, kütüphane symlink'leri, apt) — öneki değiştirmek kurulu paketleri
-  çalışmaz hale getirir. `mio` betiği ve panelin çalıştırdığı komutlar da bu yolu kullanır.
-- **Veri geçişi:** eski `com.termux` kurulumunun `files/home` klasörü yeni klasöre kopyalanır
+- **Terminal öneki:** `$PREFIX` = `/data/data/com.mio/files/usr` (uygulamanın kendi veri klasörü). Bir
+  uygulama yalnızca kendi veri klasörüne yazabildiği için önek `com.termux` yolundan taşındı; aksi
+  hâlde bootstrap hiç kurulamıyordu ("Unable to install bootstrap").
+- **Gömülü yollar:** bootstrap ikilileri `com.termux` yoluna göre derlenmiştir. Kurulum sırasında
+  `TermuxInstaller` zip'ten çıkan dosyalardaki (shebang'ler, `$PREFIX` değişkenleri, apt yapılandırması)
+  ve symlink hedeflerindeki bu yol yeni önekle değiştirilir; `MioBootstrap` da `mio`/`so`/`swset`
+  betiklerini kurarken aynısını yapar.
+- **Veri geçişi:** eski `com.termux` kurulumunun `files/home` klasörü (projeler, `~/.mio`, `~/.termux`) yeni klasöre kopyalanır
   (`MioDataMigration`). İlk açılışta arka planda denenir; elle çalıştırmak için
   **Terminal araçları > Veriler > "Eski verileri taşı"**. Mevcut dosyaların üzerine yazılmaz, başarılı
   geçiş `.mio-migrated` işaretiyle bir kez yapılır. `mio teshis` de geçiş durumunu gösterir.
