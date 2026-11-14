@@ -484,7 +484,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=15" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=16" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -504,7 +504,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=15
+MIO_WRAPPER_VERSION=16
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -658,6 +658,12 @@ if [ -n "${LD_PRELOAD:-}" ]; then
     MIO_LD_PRELOAD="$LD_PRELOAD"
     unset LD_PRELOAD
 fi
+# dpkg, paket betiklerini ve yardımcı programları PATH'te arar; önek her zaman başta olsun
+case ":$PATH:" in
+    *":$prefix/bin:"*) ;;
+    *) PATH="$prefix/bin:$PATH" ;;
+esac
+export PATH
 # shellcheck disable=SC2086
 exec "$bin/$NAME.mio-real" $apt_opts "$@"
 MIO_EOF
@@ -830,7 +836,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 18 (menü, ses, paketler, istek dosyası, güvenli depo, yama v4: bozuk önek yolları onarılır; apt-test dpkg kontrolü)\n'
+    printf 'mio sürüm: 19 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v16: apt PATH düzeltmesi)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)

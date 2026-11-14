@@ -87,7 +87,7 @@ final class TermuxInstaller {
     private static final String PATCH_MARKER_FILE_PATH = TermuxConstants.TERMUX_FILES_DIR_PATH + "/.bootstrap-patch";
 
     /** Bumped when the patching changes, so that the prefix is rebuilt once. */
-    private static final String PATCH_VERSION = "com.mio-prefix-4";
+    private static final String PATCH_VERSION = "com.mio-prefix-3";
 
     /** Performs bootstrap setup if necessary. */
     static void setupBootstrapIfNeeded(final Activity activity, final Runnable whenDone) {
@@ -307,19 +307,6 @@ final class TermuxInstaller {
         patchLegacyPaths(TERMUX_PREFIX_DIR);
         // `$HOME` and `~/.termux` of the second stage script of the bootstrap
         patchLegacyPaths(TermuxConstants.TERMUX_FILES_DIR);
-
-        // The files written by an older patch may contain the broken (NUL padded) paths, so the apt
-        // configuration is rewritten from scratch and the generated wrapper scripts are reinstalled
-        deleteIfExists(new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "apt/apt.conf.d/zz-mio-sources.conf"));
-        deleteIfExists(new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "apt/apt.conf.d/mio-apt.conf"));
-        com.termux.app.mio.MioBootstrap.repairAptState();
-        com.termux.app.mio.MioBootstrap.repairAptConfigFile();
-    }
-
-    private static void deleteIfExists(@NonNull File file) {
-        if (file.exists() && file.delete()) {
-            Logger.logInfo(LOG_TAG, "Deleted the stale apt configuration \"" + file.getAbsolutePath() + "\"");
-        }
     }
 
     /**
@@ -450,23 +437,11 @@ final class TermuxInstaller {
             int found = indexOf(result, from, searchFrom);
             if (found < 0) break;
 
-            // Bounds of the NUL terminated string that contains the path. When the match runs until
-            // the end of the file (e.g. the default `Dir::Etc` value that ends the .rodata section)
-            // there is no NUL after it, so the end of the file is used as the end of the string.
+            // Bounds of the NUL terminated string that contains the path
             int start = found;
             while (start > 0 && result[start - 1] != 0) start--;
             int end = found;
             while (end < result.length && result[end] != 0) end++;
-
-            // The replacement is shorter than the path, so the string keeps at least one unused byte.
-            // That byte is zeroed, which turns the string into a valid NUL terminated one instead of
-            // leaving the last characters of the old path behind (they were read as part of the value,
-            // e.g. `data/data/com.mio/files/usr\0\0\0` instead of `/data/data/com.mio/files/usr`).
-            if (end >= result.length) end = result.length - 1;
-            if (end <= start) {
-                searchFrom = found + from.length;
-                continue;
-            }
 
             byte[] token = new byte[end - start];
             System.arraycopy(result, start, token, 0, token.length);
@@ -474,9 +449,9 @@ final class TermuxInstaller {
             if (replaced.length > token.length) return null;
 
             System.arraycopy(replaced, 0, result, start, replaced.length);
-            for (int i = start + replaced.length; i <= end; i++) result[i] = 0;
+            for (int i = start + replaced.length; i < end; i++) result[i] = 0;
 
-            searchFrom = end + 1;
+            searchFrom = end;
         }
         return result;
     }
