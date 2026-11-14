@@ -67,7 +67,8 @@ Kullanım: mio [komut]
   mio paket baslat        Kurulu paketlerin .start-up.sh betiklerini çalıştırır.
   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur.
   mio paket log <ad>      Paketin son çalıştırma günlüğünü gösterir.
-  mio apt-fix             apt/dpkg sorunlarını onarır ve test eder (tek komut)
+  mio apt-fix             apt/dpkg sorunlarını onarır, test eder, en hızlı depoyu seçer
+  mio depo hizli          Depoları ölçüp en hızlısını seçer
   mio teshis              Komutların kurulu olup olmadığını ve sürümünü gösterir.
   mio menuler             Yan menüleri gösterir/gizler.
   mio oturum              Yeni oturum açar.
@@ -402,12 +403,19 @@ MIO_EOF
 MIRROR_FILE="$PREFIX/etc/apt/sources.list"
 MIRROR_MAIN_DEFAULT="https://packages-cf.termux.dev/apt/termux-main"
 MIRRORS="
-Termux (CF)|https://packages-cf.termux.dev/apt/termux-main
-Termux (Asya)|https://mirror.termux.dev/termux/termux-main
+Termux (Cloudflare)|https://packages-cf.termux.dev/apt/termux-main
+Termux (ana)|https://packages.termux.dev/apt/termux-main
+Astra (Ukrayna)|https://termux.astra.in.ua/apt/termux-main
+Grimler (Finlandiya)|https://grimler.se/termux/termux-main
+FAU (Almanya)|https://ftp.fau.de/termux/termux-main
+ICM (Polonya)|https://ftp.icm.edu.pl/pub/Linux/dist/termux/termux-main
+Autkin (Avrupa)|https://mirror.autkin.net/termux/termux-main
+Bouwhuis (Hollanda)|https://mirror.bouwhuis.network/termux/termux-main
+Exosun (İspanya)|https://termux.3san.dev/termux/termux-main
+CyberRex (Japonya)|https://mirrors.cbrx.io/apt/termux/termux-main
 SJTU (Çin)|https://mirror.sjtu.edu.cn/termux/apt/termux-main
 Tsinghua (Çin)|https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main
 USTC (Çin)|https://mirrors.ustc.edu.cn/termux/apt/termux-main
-Astra (Rusya)|https://mirrors.astra.in.ua/termux/termux-main
 "
 
 write_sources() {
@@ -446,15 +454,60 @@ write_sources() {
     return 0
 }
 
+# Depoları kısa süreyle dener, en hızlı olanı yazar. Ağa çıkar ama her depo için
+# en fazla 2 saniye bekler, bu yüzden saniyeler içinde biter.
+MIRRORS_FAST="
+Termux CF|https://packages-cf.termux.dev/apt/termux-main
+Astra|https://termux.astra.in.ua/apt/termux-main
+Grimler|https://grimler.se/termux/termux-main
+FAU|https://ftp.fau.de/termux/termux-main
+ICM|https://ftp.icm.edu.pl/pub/Linux/dist/termux/termux-main
+Autkin|https://mirror.autkin.net/termux/termux-main
+"
+
+mirror_pick_fast() {
+    if [ ! -x "$PREFIX/bin/curl" ]; then
+        printf 'curl yok, hız testi atlandı\n'
+        return 1
+    fi
+    printf 'Depolar deneniyor (en fazla 2 sn/depo):\n'
+    best_url="" ; best_time=""
+    for entry in $MIRRORS_FAST; do
+        url=${entry#*|}
+        label=${entry%%|*}
+        t=$("$PREFIX/bin/curl" -s -o /dev/null --max-time 2 -w '%{time_total}' \
+                "$url/dists/stable/InRelease" 2>/dev/null)
+        case "$t" in
+            ''|*[!0-9.]*) printf '  %-12s erişilemedi\n' "$label" ; continue ;;
+            *) printf '  %-12s %s sn\n' "$label" "$t" ;;
+        esac
+        if [ -z "$best_time" ] || [ "$(awk -v a="$t" -v b="$best_time" 'BEGIN{print (a<b)?1:0}')" = "1" ]; then
+            best_time="$t" ; best_url="$url"
+        fi
+    done
+    if [ -n "$best_url" ] && write_sources "$best_url"; then
+        printf 'En hızlı depo: %s (%s sn)\n' "$best_url" "$best_time"
+        return 0
+    fi
+    printf 'Hız testi sonuçsuz, depo değiştirilmedi\n'
+    return 1
+}
+
 mirror_choose() {
     if [ -n "${1:-}" ]; then
         case "$1" in
             cf|termux|varsayilan|default) write_sources "$MIRROR_MAIN_DEFAULT" && printf 'Depo: %s\n' "$MIRROR_MAIN_DEFAULT"; return $? ;;
             asya|asia) write_sources "https://mirror.termux.dev/termux/termux-main" && printf 'Depo: mirror.termux.dev\n'; return $? ;;
+            ana|main|resmi) write_sources "https://packages.termux.dev/apt/termux-main" && printf 'Depo: packages.termux.dev\n'; return $? ;;
+            grimler|fi|finlandiya) write_sources "https://grimler.se/termux/termux-main" && printf 'Depo: grimler.se\n'; return $? ;;
+            fau|almanya) write_sources "https://ftp.fau.de/termux/termux-main" && printf 'Depo: ftp.fau.de\n'; return $? ;;
+            icm|polonya) write_sources "https://ftp.icm.edu.pl/pub/Linux/dist/termux/termux-main" && printf 'Depo: ftp.icm.edu.pl\n'; return $? ;;
+            autkin|avrupa) write_sources "https://mirror.autkin.net/termux/termux-main" && printf 'Depo: mirror.autkin.net\n'; return $? ;;
+            bouwhuis|hollanda) write_sources "https://mirror.bouwhuis.network/termux/termux-main" && printf 'Depo: mirror.bouwhuis.network\n'; return $? ;;
             sjtu) write_sources "https://mirror.sjtu.edu.cn/termux/apt/termux-main" && printf 'Depo: SJTU\n'; return $? ;;
             tuna|tsinghua) write_sources "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main" && printf 'Depo: Tsinghua\n'; return $? ;;
             ustc) write_sources "https://mirrors.ustc.edu.cn/termux/apt/termux-main" && printf 'Depo: USTC\n'; return $? ;;
-            astra) write_sources "https://mirrors.astra.in.ua/termux/termux-main" && printf 'Depo: Astra\n'; return $? ;;
+            astra|ukrayna) write_sources "https://termux.astra.in.ua/apt/termux-main" && printf 'Depo: termux.astra.in.ua\n'; return $? ;;
             *) # URL verilmişse doğrudan kullan
                case "$1" in
                    http*) write_sources "$1" && printf 'Depo: %s\n' "$1"; return $? ;;
@@ -872,7 +925,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 24 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v19, hızlı indirme: sabit ayna, IPv4, çeviri yok)\n'
+    printf 'mio sürüm: 25 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v19, hız testli depo, dpkg dosya listesi onarımı)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1509,6 +1562,36 @@ case "$COMMAND" in
             printf '  dpkg yardımcı programları: tamam (DPkg::Path=%s/bin)\n' "$PREFIX"
         fi
 
+        # 4b) dpkg dosya listeleri: "files list file ... is missing final newline"
+        #     hatası kurulumu tamamen durdurur; sonu satır sonuyla bitmeyen
+        #     *.list dosyalarına satır sonu ekle
+        if [ -d "$PREFIX/var/lib/dpkg/info" ]; then
+            fixed_lists=0
+            for lf in "$PREFIX"/var/lib/dpkg/info/*.list; do
+                [ -f "$lf" ] || continue
+                if [ -s "$lf" ]; then
+                    lastc=$(tail -c 1 "$lf" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+                    [ "$lastc" = "0a" ] && continue
+                    # son satır tam bir yol ise sadece satır sonu ekle,
+                    # kesikse (yarım yol) o satırı at
+                    lastline=$(tail -n 1 "$lf" 2>/dev/null)
+                    case "$lastline" in
+                        /*) printf '\n' >> "$lf" 2>/dev/null ;;
+                        *)  awk 'NR > 1 { print prev } { prev = $0 } END { if (NR > 1) print prev }' \
+                                "$lf" > "$lf.mio-tmp" 2>/dev/null &&
+                                mv "$lf.mio-tmp" "$lf" 2>/dev/null
+                            [ -s "$lf" ] && tail -c 1 "$lf" | od -An -tx1 | grep -q 0a || printf '\n' >> "$lf" 2>/dev/null ;;
+                    esac
+                    [ -s "$lf" ] || printf '/.\n' > "$lf" 2>/dev/null
+                    fixed_lists=$((fixed_lists + 1))
+                else
+                    printf '/.\n' >> "$lf" 2>/dev/null && fixed_lists=$((fixed_lists + 1))
+                fi
+            done
+            [ "$fixed_lists" -gt 0 ] && printf '  dpkg dosya listeleri onarıldı: %s\n' "$fixed_lists" \
+                || printf '  dpkg dosya listeleri: tamam\n'
+        fi
+
         # 5) apt.conf.d dosyalarını yeniden yaz
         rm -f "$PREFIX/etc/apt/apt.conf.d/zz-mio-sources.conf" "$PREFIX/etc/apt/apt.conf.d/mio-apt.conf" 2>/dev/null
         MIO_NO_APT_CONFIG=0 ensure_apt_config >/dev/null 2>&1
@@ -1567,6 +1650,10 @@ case "$COMMAND" in
             env -u LD_PRELOAD apt-get --print-uris update 2>&1 </dev/null | head -n 6 | sed 's/^/   /'
         fi
 
+        # 8) en hızlı depoyu seç (indirme yavaşlığının asıl sebebi rastgele ayna seçimiydi)
+        printf '\n'
+        mirror_pick_fast
+
         printf '\nSONUÇ: '
         if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
             printf 'apt çalışıyor.\n'
@@ -1621,6 +1708,10 @@ case "$COMMAND" in
         if [ "${1:-}" = "sec" ] || [ "${1:-}" = "degistir" ] || [ "${1:-}" = "switch" ]; then
             shift
             mirror_choose "${1:-}"
+            exit $?
+        fi
+        if [ "${1:-}" = "hizli" ] || [ "${1:-}" = "hızlı" ] || [ "${1:-}" = "fast" ]; then
+            mirror_pick_fast
             exit $?
         fi
         if [ "${1:-}" = "liste" ] || [ "${1:-}" = "list" ]; then

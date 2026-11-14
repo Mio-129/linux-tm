@@ -310,6 +310,39 @@ public final class MioBootstrap {
         if (!status.isFile()) {
             if (writeText(status, "")) repaired = true;
         }
+
+        // dpkg, kurulu paketlerin dosya listelerini `var/lib/dpkg/info/*.list` içinde tutar ve
+        // bu dosyaların son satırının satır sonuyla bitmesini şart koşar. Termux öneğinde bazı
+        // listeler satır sonu olmadan yazılmış oluyor; dpkg o zaman
+        // "files list file for package 'sed' is missing final newline" deyip kurulumu
+        // "unrecoverable fatal error" ile tamamen durduruyor. Eksik satır sonları burada eklenir.
+        if (repairDpkgFileLists()) repaired = true;
+        return repaired;
+    }
+
+    /**
+     * Add the missing trailing newlines to the dpkg file lists, which otherwise make every
+     * `apt install` abort with "files list file for package ... is missing final newline".
+     *
+     * @return {@code true} if a file list was repaired.
+     */
+    public static boolean repairDpkgFileLists() {
+        File infoDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/info");
+        if (!infoDir.isDirectory()) return false;
+        File[] files = infoDir.listFiles();
+        if (files == null) return false;
+
+        boolean repaired = false;
+        for (File file : files) {
+            if (!file.isFile() || !file.getName().endsWith(".list")) continue;
+            String content = readText(file);
+            if (content == null) continue;
+            if (content.isEmpty()) {
+                if (writeText(file, "/.\n")) repaired = true;
+            } else if (!content.endsWith("\n")) {
+                if (writeText(file, content + "\n")) repaired = true;
+            }
+        }
         return repaired;
     }
 
@@ -336,7 +369,9 @@ public final class MioBootstrap {
             "Dir::Log \"" + prefix + "/var/log/apt\";\n" +
             "Dir::Bin::methods \"" + prefix + "/lib/apt/methods\";\n" +
             "Dir::State::extended_states \"" + prefix + "/var/lib/apt/extended_states\";\n" +
-            "DPkg::Path \"" + prefix + "/bin:/system/bin:/system/xbin\";\n";
+            "DPkg::Path \"" + prefix + "/bin:/system/bin:/system/xbin\";\n" +
+            "Acquire::ForceIPv4 \"true\";\n" +
+            "Acquire::Languages \"none\";\n";
         File conf = new File(confDir, "mio-apt.conf");
         String current = conf.isFile() ? readText(conf) : null;
         if (content.equals(current)) return false;
