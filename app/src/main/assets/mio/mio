@@ -483,7 +483,17 @@ install_apt_wrapper() {
     real="$PREFIX/bin/$name.mio-real"
     wrapper="$PREFIX/bin/$name"
     [ -d "$PREFIX/bin" ] || return 0
-    [ -f "$wrapper" ] || return 0
+
+    # Sarmalayıcı silinmiş ama gerçek araç duruyorsa sıfırdan kurulur (apt-fix sonrası kurtarma)
+    if [ ! -f "$wrapper" ] && [ ! -f "$real" ]; then
+        return 0
+    fi
+    if [ ! -f "$wrapper" ] && [ -f "$real" ]; then
+        case "$name" in
+            pkg|apt|apt-get) : ;;   # devam: aşağıda yeniden yazılır
+            *) return 0 ;;
+        esac
+    fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
     if grep -q "MIO_WRAPPER_VERSION=17" "$wrapper" 2>/dev/null; then
@@ -842,7 +852,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 21 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17)\n'
+    printf 'mio sürüm: 22 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v17, apt-fix onarır + test eder)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1484,15 +1494,31 @@ case "$COMMAND" in
         MIO_NO_APT_CONFIG=0 ensure_apt_config >/dev/null 2>&1
         printf '  apt yapılandırması yazıldı\n'
 
-        # 6) sarmalayıcıları tazele
-        rm -f "$PREFIX/bin/pkg" "$PREFIX/bin/apt" "$PREFIX/bin/apt-get" 2>/dev/null
+        # 6) sarmalayıcıları tazele (SİLEREK DEĞİL: silinirse gerçek araç `*.mio-real` yedeğinden gelir)
         install_apt_wrappers >/dev/null 2>&1
-        printf '  sarmalayıcılar kuruldu\n'
+        for n in pkg apt apt-get; do
+            if [ -x "$PREFIX/bin/$n" ]; then
+                printf '  %s: hazır\n' "$n"
+            elif [ -x "$PREFIX/bin/$n.mio-real" ]; then
+                # sarmalayıcı yazılamadıysa gerçek aracı eski yerine bağla
+                cp "$PREFIX/bin/$n.mio-real" "$PREFIX/bin/$n" 2>/dev/null &&
+                    chmod 755 "$PREFIX/bin/$n" 2>/dev/null &&
+                    printf '  %s: yedekten geri getirildi\n' "$n"
+            else
+                printf '  %s: YOK (%s.mio-real da yok)\n' "$n" "$n"
+            fi
+        done
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
         printf '\n=== test ===\n'
         printf 'dpkg: '
-        if "$PREFIX/bin/dpkg" --version >/dev/null 2>&1; then printf 'çalışıyor\n'; else printf 'ÇALIŞMIYOR\n'; fi
+        if [ ! -x "$PREFIX/bin/dpkg" ]; then
+            printf 'YOK (%s/bin/dpkg)\n' "$PREFIX"
+        elif "$PREFIX/bin/dpkg" --print-architecture >/dev/null 2>&1; then
+            printf 'çalışıyor (%s)\n' "$("$PREFIX/bin/dpkg" --print-architecture 2>/dev/null | head -n 1)"
+        else
+            printf 'ÇALIŞMIYOR (çıkış=%s)\n' "$?"
+        fi
 
         printf 'apt yöntemi (https): '
         if env -u LD_PRELOAD "$PREFIX/lib/apt/methods/https" </dev/null 2>/dev/null | head -n 1 | grep -q Capabilities; then
@@ -1502,7 +1528,18 @@ case "$COMMAND" in
         fi
 
         printf 'depo okuma: '
-        uris=$(env -u LD_PRELOAD apt-get -o Debug::NoLocking=1 --print-uris update 2>&1 </dev/null | grep -c "InRelease\|Packages")
+        print_tool=""
+        for t in apt-get apt; do
+            [ -x "$PREFIX/bin/$t" ] && { print_tool="$PREFIX/bin/$t"; break; }
+        done
+        if [ -z "$print_tool" ]; then
+            printf 'BAŞARISIZ (ne apt ne apt-get var)\n'
+            uris=0
+        else
+        uri_out=$(env -u LD_PRELOAD "$print_tool" -o Debug::NoLocking=1 --print-uris update 2>&1 </dev/null || true)
+        uris=$(printf '%s\n' "$uri_out" | grep -c "InRelease" || true)
+        [ -n "$uris" ] || uris=0
+        fi
         if [ "${uris:-0}" -gt 0 ]; then
             printf 'ok (%s adres)\n' "$uris"
         else
