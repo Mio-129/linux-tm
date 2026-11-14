@@ -148,7 +148,8 @@ ensure_apt_config() {
 
     # 3d) apt'nin çalışma klasörleri (yoksa "List directory .../var/lib/apt is missing")
     for d in "$PREFIX/var/lib/apt/lists/partial" "$PREFIX/var/cache/apt/archives/partial" \
-             "$PREFIX/var/lib/dpkg" "$PREFIX/tmp"; do
+             "$PREFIX/var/lib/dpkg" "$PREFIX/var/log/apt" "$PREFIX/etc/apt/trusted.gpg.d" \
+             "$PREFIX/tmp"; do
         [ -d "$d" ] || mkdir -p "$d" 2>/dev/null
     done
     [ -f "$PREFIX/var/lib/dpkg/status" ] || : > "$PREFIX/var/lib/dpkg/status" 2>/dev/null
@@ -170,10 +171,18 @@ ensure_apt_config() {
     apc="$conf_dir/mio-apt.conf"
     {
         printf '# mio: apt yolları (APT_CONFIG)\n'
+        printf 'Dir "%s";\n' "$PREFIX"
+        printf 'Dir::Etc "%s/etc/apt";\n' "$PREFIX"
         printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
         printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+        printf 'Dir::Etc::trusted "%s/etc/apt/trusted.gpg";\n' "$PREFIX"
+        printf 'Dir::Etc::trustedparts "%s/etc/apt/trusted.gpg.d";\n' "$PREFIX"
+        printf 'Dir::State "%s/var/lib/apt";\n' "$PREFIX"
         printf 'Dir::State::lists "%s/var/lib/apt/lists";\n' "$PREFIX"
+        printf 'Dir::State::status "%s/var/lib/dpkg/status";\n' "$PREFIX"
+        printf 'Dir::Cache "%s/var/cache/apt";\n' "$PREFIX"
         printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$PREFIX"
+        printf 'Dir::Log "%s/var/log/apt";\n' "$PREFIX"
     } > "$apc.tmp" 2>/dev/null
     if [ -s "$apc.tmp" ]; then
         mv "$apc.tmp" "$apc" 2>/dev/null
@@ -304,6 +313,18 @@ sources_report() {
         fi
     else
         printf '  apt bulunamadı\n'
+    fi
+
+    printf 'methods tanılama (https):\n'
+    hm="$PREFIX/lib/apt/methods/https"
+    if [ -e "$hm" ]; then
+        ls -l "$hm" 2>/dev/null | sed 's/^/  /'
+        readlink -f "$hm" 2>/dev/null | sed 's/^/  hedef: /'
+        if [ -x "$hm" ]; then printf '  çalıştırılabilir: evet\n'; else printf '  çalıştırılabilir: HAYIR\n'; fi
+        ht=$("$PREFIX/lib/apt/methods/https" --version 2>&1 | head -n 2)
+        if [ -n "$ht" ]; then printf '  çalıştırma denemesi:\n'; printf '%s\n' "$ht" | sed 's/^/    /'; else printf '  çalıştırma denemesi: çıktı yok (sessiz başarısızlık)\n'; fi
+    else
+        printf '  %s YOK\n' "$hm"
     fi
 
     printf '\napt update --print-uris (ilk 5 satır):\n'
@@ -462,7 +483,7 @@ install_apt_wrapper() {
     [ -f "$wrapper" ] || return 0
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=12" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=13" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -482,7 +503,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=12
+MIO_WRAPPER_VERSION=13
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -575,7 +596,7 @@ fi
 # 6) apt'nin çalışma klasörleri eksikse apt hiçbir şey okuyamaz:
 #    "E: List directory .../usr/var/lib/apt is missing" (bu, "sources.list" hatasından sonraki adım)
 for d in "$prefix/var/lib/apt/lists/partial" "$prefix/var/cache/apt/archives/partial" \
-         "$prefix/var/lib/dpkg" "$prefix/tmp"; do
+         "$prefix/var/lib/dpkg" "$prefix/var/log/apt" "$prefix/etc/apt/trusted.gpg.d" "$prefix/tmp"; do
     [ -d "$d" ] || mkdir -p "$d" 2>/dev/null
 done
 touch "$prefix/var/lib/dpkg/status" 2>/dev/null
@@ -585,19 +606,42 @@ touch "$prefix/var/lib/dpkg/status" 2>/dev/null
 export APT_CONFIG="$conf_dir/mio-apt.conf"
 {
     printf '# mio: apt yolları (APT_CONFIG)\n'
+    printf 'Dir "%s";\n' "$prefix"
+    printf 'Dir::Etc "%s/etc/apt";\n' "$prefix"
     printf 'Dir::Etc::sourcelist "%s";\n' "$sources"
     printf 'Dir::Etc::sourceparts "%s";\n' "$parts"
+    printf 'Dir::Etc::trusted "%s/etc/apt/trusted.gpg";\n' "$prefix"
+    printf 'Dir::Etc::trustedparts "%s/etc/apt/trusted.gpg.d";\n' "$prefix"
+    printf 'Dir::State "%s/var/lib/apt";\n' "$prefix"
     printf 'Dir::State::lists "%s/var/lib/apt/lists";\n' "$prefix"
+    printf 'Dir::State::status "%s/var/lib/dpkg/status";\n' "$prefix"
+    printf 'Dir::Cache "%s/var/cache/apt";\n' "$prefix"
     printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$prefix"
+    printf 'Dir::Log "%s/var/log/apt";\n' "$prefix"
 } > "$APT_CONFIG" 2>/dev/null
 
+# 8) Tüm apt kök yollarını dayat. Bu apt yapısında `Dir` öneğe ayarlı olmadığı için göreli
+#    varsayılanlar kök dosya sistemine çözülüyor ("E: List directory .../var/lib/apt is missing"),
+#    sourcelist/sourceparts da okunmadığı için "The list of sources could not be read" çıkıyor.
+#    Önek yolu boşluk içermez, bu yüzden seçenekler tek bir değişkende toplanabilir.
+apt_opts="-o Dir=$prefix -o Dir::Etc=$prefix/etc/apt"
+apt_opts="$apt_opts -o Dir::Etc::sourcelist=$sources -o Dir::Etc::sourceparts=$parts"
+apt_opts="$apt_opts -o Dir::Etc::trusted=$prefix/etc/apt/trusted.gpg"
+apt_opts="$apt_opts -o Dir::Etc::trustedparts=$prefix/etc/apt/trusted.gpg.d"
+apt_opts="$apt_opts -o Dir::State=$prefix/var/lib/apt -o Dir::State::lists=$prefix/var/lib/apt/lists"
+apt_opts="$apt_opts -o Dir::State::status=$prefix/var/lib/dpkg/status"
+apt_opts="$apt_opts -o Dir::Cache=$prefix/var/cache/apt"
+apt_opts="$apt_opts -o Dir::Cache::archives=$prefix/var/cache/apt/archives"
+apt_opts="$apt_opts -o Dir::Log=$prefix/var/log/apt"
+
 if [ "$NAME" = "pkg" ]; then
+    # `pkg` kendi argüman ayrıştırıcısını kullanır, `-o` kabul etmez; ama `apt`/`apt-get`'i PATH'ten
+    # çağırdığı için onlar bu sarmalayıcıdan geçer ve yollar orada dayatılır.
+    export APT_CONFIG="$conf_dir/mio-apt.conf"
     exec "$bin/$NAME.mio-real" "$@"
 fi
-exec "$bin/$NAME.mio-real" \
-    -o "Dir::Etc::sourcelist=$sources" \
-    -o "Dir::Etc::sourceparts=$parts" \
-    "$@"
+# shellcheck disable=SC2086
+exec "$bin/$NAME.mio-real" $apt_opts "$@"
 MIO_EOF
     sed -e "s|@@NAME@@|$name|g" -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
     chmod 755 "$wrapper" 2>/dev/null
@@ -768,7 +812,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 13 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v12: APT_CONFIG ile yol dayatma + eksik apt klasörleri)\n'
+    printf 'mio sürüm: 14 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v13: apt Dir kökü öneğe sabitlendi)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)

@@ -295,6 +295,8 @@ public final class MioBootstrap {
             "var/lib/apt/lists/partial",
             "var/cache/apt/archives/partial",
             "var/lib/dpkg",
+            "var/log/apt",
+            "etc/apt/trusted.gpg.d",
             "tmp"
         };
         for (String directory : directories) {
@@ -321,10 +323,18 @@ public final class MioBootstrap {
         if (!confDir.isDirectory()) return false;
         String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
         String content = "# mio: apt paths (APT_CONFIG)\n" +
+            "Dir \"" + prefix + "\";\n" +
+            "Dir::Etc \"" + aptDir.getAbsolutePath() + "\";\n" +
             "Dir::Etc::sourcelist \"" + new File(aptDir, "sources.list").getAbsolutePath() + "\";\n" +
             "Dir::Etc::sourceparts \"" + new File(aptDir, "sources.list.d").getAbsolutePath() + "\";\n" +
+            "Dir::Etc::trusted \"" + new File(aptDir, "trusted.gpg").getAbsolutePath() + "\";\n" +
+            "Dir::Etc::trustedparts \"" + new File(aptDir, "trusted.gpg.d").getAbsolutePath() + "\";\n" +
+            "Dir::State \"" + prefix + "/var/lib/apt\";\n" +
             "Dir::State::lists \"" + prefix + "/var/lib/apt/lists\";\n" +
-            "Dir::Cache::archives \"" + prefix + "/var/cache/apt/archives\";\n";
+            "Dir::State::status \"" + prefix + "/var/lib/dpkg/status\";\n" +
+            "Dir::Cache \"" + prefix + "/var/cache/apt\";\n" +
+            "Dir::Cache::archives \"" + prefix + "/var/cache/apt/archives\";\n" +
+            "Dir::Log \"" + prefix + "/var/log/apt\";\n";
         File conf = new File(confDir, "mio-apt.conf");
         String current = conf.isFile() ? readText(conf) : null;
         if (content.equals(current)) return false;
