@@ -830,7 +830,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 17 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v15: apt LD_PRELOAD olmadan çalışır; mio apt-test)\n'
+    printf 'mio sürüm: 18 (menü, ses, paketler, istek dosyası, güvenli depo, yama v4: bozuk önek yolları onarılır; apt-test dpkg kontrolü)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1446,6 +1446,14 @@ case "$COMMAND" in
 
         printf '\n3) apt gerçekte hangi yolu kullanıyor:\n'
         env -u LD_PRELOAD apt-config dump 2>/dev/null | grep -a -E '^Dir::Bin::methods|^Dir::State|^Dir::Etc' | sed 's/^/   /'
+
+        printf '\n3b) dpkg ve yardımcı programları:\n'
+        printf '   dpkg: %s\n' "$(command -v dpkg || echo YOK)"
+        printf '   sh: %s\n' "$(command -v sh || echo YOK)"
+        printf '   rm: %s\n' "$(command -v rm || echo YOK)"
+        printf '   tar: %s\n' "$(command -v tar || echo YOK)"
+        printf '   PATH: %s\n' "$PATH"
+        dpkg --print-architecture 2>/dev/null | sed 's/^/   mimari: /'
 
         printf '\n4) apt-get kuru çalıştırma (indirme yok):\n'
         out=$(env -u LD_PRELOAD apt-get -o Debug::NoLocking=1 --print-uris update 2>&1 </dev/null | head -n 5)
