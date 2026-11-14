@@ -223,19 +223,6 @@ public final class MioAudioStream {
             mLastToast.show();
         });
     }
-    /** @return The current media volume as a percentage, {@code -1} if it is not known. */
-    public int getVolumePercent() {
-        if (mAudioManager == null) return -1;
-        try {
-            int max = mAudioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-            int current = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-            if (max <= 0) return -1;
-            return Math.round(current * 100f / max);
-        } catch (Exception e) {
-            return -1;
-        }
-    }
-
     /** Raise or lower the media volume of the phone by the passed percentage. */
     public static void adjustMediaVolume(@NonNull Context context, final int deltaPercent) {
         AudioManager audioManager = (AudioManager) context.getApplicationContext()
