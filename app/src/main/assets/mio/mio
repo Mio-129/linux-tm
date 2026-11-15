@@ -570,7 +570,10 @@ install_apt_wrapper() {
     wrapper="$PREFIX/bin/$name"
     [ -d "$PREFIX/bin" ] || return 0
 
-    # Sarmalayıcı silinmiş ama gerçek araç duruyorsa sıfırdan kurulur (apt-fix sonrası kurtarma)
+    # Gerçek araç hiç yoksa (bozuk kurulum) yapacak bir şey yok -> gerçek araç YOK demektir.
+    # Eskiden sarmalayıcı dosyası da yoksa `return 0` deniyordu; o zaman `pkg` hiç
+    # sarmalanmıyor ve `pkg install` doğrudan gerçek dpkg'yi çağırıp "unable to stat
+    # './data/data/com.termux'" veriyordu (cihazdaki pkg hatası buydu).
     if [ ! -f "$wrapper" ] && [ ! -f "$real" ]; then
         return 0
     fi
@@ -822,7 +825,7 @@ mio_pack_deb() {
     rm -f "$_pk_out" 2>/dev/null
 
     _ddpkg=""
-    for c in "$PREFIX/bin/dpkg-deb" dpkg-deb; do
+    for c in "$PREFIX/bin/dpkg-deb.mio-real" "$PREFIX/bin/dpkg-deb" dpkg-deb; do
         if command -v "$c" >/dev/null 2>&1; then _ddpkg="$c"; break; fi
     done
     if [ -n "$_ddpkg" ]; then
@@ -1053,8 +1056,9 @@ mio_convert_deb() {
     _deb="$1"
     [ -f "$_deb" ] || return 1
 
+    # GERÇEK dpkg-deb: sarmalayıcıyı kullanmak dönüşüm sırasında özyineleme yaratır
     _ddpkg=""
-    for c in "$PREFIX/bin/dpkg-deb" dpkg-deb; do
+    for c in "$PREFIX/bin/dpkg-deb.mio-real" "$PREFIX/bin/dpkg-deb" dpkg-deb; do
         if command -v "$c" >/dev/null 2>&1; then _ddpkg="$c"; break; fi
     done
     [ -n "$_ddpkg" ] || { printf 'mio: dpkg-deb yok, paket çevrilemedi\n' >&2; return 1; }
@@ -1209,6 +1213,18 @@ mio_convert_deb() {
         [ -f "$_ctl/$_f" ] && chmod 755 "$_ctl/$_f" 2>/dev/null
     done
 
+    # 3c) DİZİN İZİNLERİ: dpkg, dosyayı hedef dizine `*.dpkg-new` olarak yazar; dizin yazılabilir
+    #     değilse "unable to create ... Permission denied" verir. Paketlerde dizin modu 0555 gibi
+    #     gelebiliyor (ya da yedek yolda öyle oluşuyor); dönüşümde düzeltilir.
+    find "$_root" -type d 2>/dev/null | while IFS= read -r _d; do
+        case "$_d" in
+            "$_root"/*/bin|"$_root"/*/sbin) _m=755 ;;
+            *) _m=755 ;;
+        esac
+        [ -w "$_d" ] || chmod u+w "$_d" 2>/dev/null
+        chmod "$_m" "$_d" 2>/dev/null
+    done
+
     # 4) yeniden paketle: DEBIAN dizini kontrol dosyalarından, veri ağacı çıkarılan kökten
     cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
     if [ ! -f "$_root/DEBIAN/control" ]; then
@@ -1268,7 +1284,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=9" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=10" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1289,7 +1305,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=9
+MIO_DPKG_WRAPPER_VERSION=10
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1347,11 +1363,95 @@ MIO_EOF
     printf 'mio: dpkg sarmalayıcısı kuruldu\n'
 }
 
+# dpkg-deb sarmalayıcısı: dpkg her paketi açarken `dpkg-deb --control`/`--fsys-tarfile`
+# çağırır. Bu sarmalayıcı, verilen .deb hâlâ com.termux yolluysa ÖNCE `mio deb-cevir` ile
+# çevirir. Böylece `pkg install`, `apt install` ya da doğrudan `dpkg -i` fark etmeksizin
+# dönüşüm devreye girer (cihazda `pkg` sarmalayıcısı atlanıp dpkg orijinal paketi alıyordu).
+#
+#   - `-b/--build` çağrıları dokunulmadan geçer (mio_pack_deb kendi paketini üretir)
+#   - `-R/-x` (açma) çağrılarında da çevirir; çıktı yolları com.mio olur
+install_dpkg_deb_wrapper() {
+    [ -d "$PREFIX/bin" ] || return 0
+    real="$PREFIX/bin/dpkg-deb.mio-real"
+    wrapper="$PREFIX/bin/dpkg-deb"
+    [ -f "$wrapper" ] || [ -f "$real" ] || return 0
+
+    if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=2" "$wrapper" 2>/dev/null; then
+        return 0
+    fi
+
+    if [ ! -f "$real" ]; then
+        if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
+            return 0
+        fi
+        cp "$wrapper" "$real" 2>/dev/null || return 1
+        chmod 755 "$real" 2>/dev/null
+    fi
+    [ -x "$real" ] || return 1
+
+    cat > "$wrapper" <<'MIO_EOF'
+#!@@PREFIX@@/bin/sh
+# mio dpkg-deb sarmalayıcısı: .deb içindeki com.termux yollarını com.mio yapar.
+MIO_DPKG_DEB_WRAPPER_VERSION=2
+bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
+case "$bin" in
+    ""|/) bin=@@PREFIX@@/bin ;;
+esac
+prefix=$(dirname "$bin")
+real="$bin/dpkg-deb.mio-real"
+mio="$bin/mio"
+
+# Dönüşüm sırasında mio kendisi dpkg-deb çağırır; o çağrılar dokunulmadan geçmeli (yoksa döngü)
+if [ -n "${MIO_DEB_CONVERTING:-}" ]; then
+    exec "$real" "$@"
+fi
+
+# Paket ÜRETME çağrıları dokunulmadan geçer
+build=0
+for a in "$@"; do
+    case "$a" in
+        -b|--build|--build=*|-S|--show|-I|--info|-f|--field|-W|--showformat*|-c|--contents|-s|--showformat)
+            case "$a" in
+                -b|--build|--build=*) build=1 ;;
+            esac
+            ;;
+    esac
+done
+
+if [ "$build" -eq 1 ] || [ ! -x "$real" ]; then
+    exec "$real" "$@"
+fi
+
+# .deb argümanlarını (ve açma hedeflerini) çevir
+case ":$PATH:" in
+    *":$bin:"*) : ;;
+    *) PATH="$bin:$PATH" ; export PATH ;;
+esac
+
+for a in "$@"; do
+    case "$a" in
+        *.deb)
+            [ -f "$a" ] || continue
+            if [ -x "$mio" ]; then
+                MIO_DEB_CONVERTING=1 "$mio" deb-cevir "$a" >/dev/null 2>&1 || :
+            fi
+            ;;
+    esac
+done
+
+exec "$real" "$@"
+MIO_EOF
+    sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
+    chmod 755 "$wrapper" 2>/dev/null
+    return 0
+}
+
 install_apt_wrappers() {
     install_apt_wrapper pkg
     install_apt_wrapper apt
     install_apt_wrapper apt-get
     install_dpkg_wrapper
+    install_dpkg_deb_wrapper
     return 0
 }
 
@@ -1537,7 +1637,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 32 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v9, ELF guvenli deb cevirici)\n'
+    printf 'mio sürüm: 33 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v9, dpkg-deb kancası, ELF guvenli deb cevirici)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2343,16 +2443,19 @@ case "$COMMAND" in
             [ -x "$PREFIX/bin/$n" ] || continue
             if grep -q "MIO_WRAPPER_VERSION" "$PREFIX/bin/$n" 2>/dev/null; then :; else _chain_ok=0; fi
         done
-        if [ -x "$PREFIX/bin/dpkg" ] && grep -q "dpkg-sarmala\|deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null; then :; else _chain_ok=0; fi
+        # dpkg sarmalayıcısı (yol) + dpkg-deb sarmalayıcısı (paket açma kancası)
+        if [ -x "$PREFIX/bin/dpkg" ] && grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null; then :; else _chain_ok=0; fi
+        if [ -f "$PREFIX/bin/dpkg-deb.mio-real" ] && grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$PREFIX/bin/dpkg-deb" 2>/dev/null; then :; else _chain_ok=0; fi
         if [ "$_chain_ok" -eq 1 ]; then
             printf 'tamam (apt -> mio -> dpkg)\n'
         else
             printf 'EKSİK — onarılıyor\n'
             install_apt_wrappers >/dev/null 2>&1
-            if [ -x "$PREFIX/bin/dpkg" ] && grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null; then
-                printf '  onarıldı: dpkg sarmalayıcısı güncel\n'
+            if [ -x "$PREFIX/bin/dpkg" ] && grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null &&
+               grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$PREFIX/bin/dpkg-deb" 2>/dev/null; then
+                printf '  onarıldı: dpkg ve dpkg-deb sarmalayıcıları güncel\n'
             else
-                printf '  ONARILAMADI: %s/bin/dpkg yazılamıyor\n' "$PREFIX"
+                printf '  ONARILAMADI: %s/bin/dpkg ya da dpkg-deb yazılamıyor\n' "$PREFIX"
             fi
         fi
 
@@ -2377,6 +2480,9 @@ case "$COMMAND" in
         done
         if [ -x "$PREFIX/bin/dpkg" ]; then
             grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null || ok=0
+        fi
+        if [ -f "$PREFIX/bin/dpkg-deb.mio-real" ]; then
+            grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$PREFIX/bin/dpkg-deb" 2>/dev/null || ok=0
         fi
         [ "$ok" -eq 1 ] && printf 'mio: sarmalayıcılar hazır\n'
         exit $((1 - ok))
