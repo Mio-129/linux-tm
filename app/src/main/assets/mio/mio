@@ -1289,8 +1289,39 @@ mio_convert_deb() {
 #   mio_repair_dpkg_db
 mio_repair_dpkg_db() {
     _db="${PREFIX:-/data/data/com.mio/files/usr}/var/lib/dpkg"
-    [ -d "$_db/info" ] || return 0
+    [ -d "$_db" ] || return 0
     _fixed=0
+
+    # 0) dpkg'nin ÇALIŞMA DİZİNLERİ. Eksik ya da yazılamaz olduğunda dpkg şu hatayı verir:
+    #      dpkg: unrecoverable fatal error, aborting:
+    #       unable to install updated status of '<paket>': No such file or directory
+    #    (status güncellemesi geçici olarak updates/ altına yazılır). Bu yüzden her çalıştırmada
+    #    dizinler oluşturulur ve yazma izni verilir.
+    for _d in "$_db" "$_db/info" "$_db/updates" "$_db/parts" "$_db/triggers" \
+              "${PREFIX:-/data/data/com.mio/files/usr}/var/log" \
+              "${PREFIX:-/data/data/com.mio/files/usr}/var/log/apt"; do
+        if [ ! -d "$_d" ]; then
+            mkdir -p "$_d" 2>/dev/null && _fixed=$((_fixed + 1))
+        fi
+    done
+    # updates/ eskiden dosya olarak kalmışsa (bozuk kurulum) dizine çevir
+    if [ -e "$_db/updates" ] && [ ! -d "$_db/updates" ]; then
+        rm -f "$_db/updates" 2>/dev/null
+        mkdir -p "$_db/updates" 2>/dev/null && _fixed=$((_fixed + 1))
+    fi
+    # root olmayan kurulumda dpkg bu dizinlere yazabilmeli
+    for _d in "$_db" "$_db/info" "$_db/updates" "$_db/parts" "$_db/triggers"; do
+        [ -d "$_d" ] || continue
+        [ -w "$_d" ] || chmod u+rwx "$_d" 2>/dev/null
+    done
+    if [ -d "${PREFIX:-/data/data/com.mio/files/usr}/var/log/dpkg.log" ]; then
+        rm -rf "${PREFIX:-/data/data/com.mio/files/usr}/var/log/dpkg.log" 2>/dev/null
+        _fixed=$((_fixed + 1))
+    fi
+    # updates/ içinde yarıda kalmış durum dosyaları dpkg'yi kilitler
+    rm -f "$_db"/updates/[0-9]* "$_db"/updates/tmp.* 2>/dev/null
+    [ -f "$_db/status" ] || : > "$_db/status" 2>/dev/null
+    [ -d "$_db/info" ] || return 0
 
     # 1) sonu newline ile bitmeyen .list dosyaları
     for _l in "$_db/info"/*.list; do
@@ -1719,7 +1750,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 34 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı onarımı, kalıcı duvar kağıdı/ses)\n'
+    printf 'mio sürüm: 35 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2413,22 +2444,31 @@ case "$COMMAND" in
         fi
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
-        # dpkg veritabanı: yarıda kalan kurulumdan kalan bozukluklar (newline, eksik .list)
+        # dpkg veritabanı: eksik/yazılamaz çalışma dizinleri ve yarıda kalan kurulum artıkları
         printf 'dpkg veritabanı: '
-        if [ -f "$PREFIX/var/lib/dpkg/status" ]; then
+        if [ -d "$PREFIX/var/lib/dpkg" ]; then
             _bad=0
+            _dbdirs=""
+            for _d in "$PREFIX/var/lib/dpkg/updates" "$PREFIX/var/lib/dpkg/info" "$PREFIX/var/lib/dpkg/parts"; do
+                if [ ! -d "$_d" ]; then
+                    _bad=$((_bad + 1)); _dbdirs="$_dbdirs ${_d##*/}(yok)"
+                elif [ ! -w "$_d" ]; then
+                    _bad=$((_bad + 1)); _dbdirs="$_dbdirs ${_d##*/}(salt-okunur)"
+                fi
+            done
             for _l in "$PREFIX/var/lib/dpkg/info"/*.list; do
                 [ -f "$_l" ] && [ -s "$_l" ] || continue
                 [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ] && _bad=$((_bad + 1))
             done
             if [ "$_bad" -gt 0 ]; then
-                printf 'onarıldı (%s dosyada eksik newline)\n' "$_bad"
+                printf 'onarıldı:%s\n' "$_dbdirs"
                 mio_repair_dpkg_db
             else
-                printf 'sağlam\n'
+                printf 'sağlam (yazılabilir)\n'
             fi
         else
-            printf 'status dosyası yok\n'
+            printf 'var/lib/dpkg yok, oluşturuluyor\n'
+            mio_repair_dpkg_db
         fi
 
         printf '\n=== test ===\n'
@@ -2525,7 +2565,7 @@ case "$COMMAND" in
             grep -m1 -i "mio:\|error" "$probe_dir/conv.log" 2>/dev/null | sed 's/^/  /'
         elif [ "$probe_stage" = "kurulum" ]; then
             printf 'BAŞARISIZ (dpkg kurmadı)\n'
-            grep -m1 -i "error\|denied" "$probe_dir/log" 2>/dev/null | sed 's/^/  /'
+            grep -i "error\|denied\|unable\|fatal" "$probe_dir/log" 2>/dev/null | head -n 3 | sed 's/^/  /'
         else
             printf 'BAŞARISIZ (kuruldu ama dosya com.mio önekinde değil)\n'
             grep -m1 -i "error\|denied" "$probe_dir/log" 2>/dev/null | sed 's/^/  /'
