@@ -78,6 +78,9 @@ public final class MioBootstrap {
 
         if (!forceInstall) {
             Logger.logDebug(LOG_TAG, "Commands are already installed for version \"" + currentVersion + "\"");
+            // An update that only changes the wrappers does not touch the commands, so the
+            // wrappers are refreshed even when the commands are already up to date.
+            repairPackageWrappers();
             return;
         }
 
@@ -91,9 +94,49 @@ public final class MioBootstrap {
         if (allInstalled) {
             writeVersionFile(currentVersion);
             Logger.logInfo(LOG_TAG, "Commands installed successfully: " + COMMANDS.toString());
+            // The wrappers live in the same prefix as the commands, so they can be refreshed now
+            repairPackageWrappers();
         } else {
             Logger.logError(LOG_TAG, "Failed to install some of the commands, will retry on next app start");
         }
+    }
+
+    /**
+     * Run `mio sarmalayici` in the background, so that the apt and dpkg wrappers are refreshed on
+     * every app start (no network access, only the wrapper files are rewritten).
+     *
+     * The dpkg wrapper is what converts the `com.termux` paths of a package to `com.mio` before
+     * dpkg unpacks it. It used to be installed only when `mio apt-fix` or `mio depo` was run, so a
+     * user who went straight to `apt install` kept an old wrapper, which ignored the conversion
+     * errors and let dpkg fail with `unable to stat './data/data/com.termux'` and exit code 1
+     * while printing nothing about the real reason.
+     */
+    private static void repairPackageWrappers() {
+        final File mio = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR, "mio");
+        if (!mio.isFile()) return;
+
+        final File home = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
+        Thread thread = new Thread(() -> {
+            Process process = null;
+            try {
+                ProcessBuilder builder = new ProcessBuilder(mio.getAbsolutePath(), "sarmalayici");
+                builder.redirectErrorStream(true);
+                builder.redirectOutput(new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "tmp/mio-wrappers.log"));
+                builder.environment().put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+                builder.environment().put("HOME", home.getAbsolutePath());
+                builder.environment().put("TMPDIR", TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/tmp");
+                builder.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":/system/bin:/system/xbin");
+                process = builder.start();
+                int exitCode = process.waitFor();
+                Logger.logInfo(LOG_TAG, "Refreshed the package wrappers with `mio sarmalayici`, exit code " + exitCode);
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to refresh the package wrappers", e);
+            } finally {
+                if (process != null) process.destroy();
+            }
+        }, "mio-package-wrappers");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /**

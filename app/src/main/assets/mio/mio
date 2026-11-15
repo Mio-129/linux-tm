@@ -18,6 +18,8 @@
 #   mio paket baslat        Kurulu paketlerin .start-up.sh betiklerini çalıştırır
 #   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur
 #   mio teshis              Kurulu komutları ve sürümü kontrol eder (menü açılmıyorsa)
+#   mio apt-fix             apt/dpkg onarımı; paket kurmayı gerçek bir deb ile prova eder
+#   mio deb-cevir -t <deb>  Bir paketin neden çevrilemediğini söyler
 #   mio menuler             Yan menüleri aç/kapat
 #   mio oturum              Yeni oturum aç
 #   mio yardim              Bu yardımı gösterir
@@ -68,6 +70,9 @@ Kullanım: mio [komut]
   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur.
   mio paket log <ad>      Paketin son çalıştırma günlüğünü gösterir.
   mio apt-fix             apt/dpkg sorunlarını onarır, test eder, en hızlı depoyu seçer
+  mio sarmalayici         apt/dpkg sarmalayıcılarını tazeler (uygulama her açılışta çağırır)
+  mio deb-cevir <deb>     .deb içindeki com.termux yollarını com.mio yapar
+  mio deb-cevir -t <deb>  Paketin neden çevrilemediğini söyler (hiçbir şeyi değiştirmez)
   mio depo hizli          Depoları ölçüp en hızlısını seçer
   mio teshis              Komutların kurulu olup olmadığını ve sürümünü gösterir.
   mio menuler             Yan menüleri gösterir/gizler.
@@ -577,7 +582,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=25" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=27" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -597,7 +602,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=25
+MIO_WRAPPER_VERSION=27
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -763,6 +768,16 @@ apt_opts="$apt_opts -o Acquire::Retries=3 -o Acquire::http::Pipeline-Depth=0"
 arch=$(dpkg --print-architecture 2>/dev/null)
 [ -n "$arch" ] && apt_opts="$apt_opts -o APT::Architecture=$arch"
 
+# en son) `apt install` sırasında dpkg sarmalayıcısı eski kalmasın: bu sarmalayıcı, `mio apt-fix`
+#     çalıştırılmadan da güncel dpkg sarmalayıcısını yerine koyar (tek eksik parça buydu: eski
+#     sarmalayıcı dönüşüm hatasını yutuyor ve dpkg orijinal com.termux paketiyle çıkış kodu 1
+#     veriyordu). Kurulum başarısız olursa apt normal akışına devam eder, engellenmez.
+if [ -x "$prefix/bin/mio" ]; then
+    if ! grep -q "MIO_DPKG_WRAPPER_VERSION=" "$prefix/bin/dpkg" 2>/dev/null; then
+        "$prefix/bin/mio" dpkg-sarmala >/dev/null 2>&1 || :
+    fi
+fi
+
 if [ "$NAME" = "pkg" ]; then
     # `pkg` kendi argüman ayrıştırıcısını kullanır, `-o` kabul etmez; ama `apt`/`apt-get`'i PATH'ten
     # çağırdığı için onlar bu sarmalayıcıdan geçer ve yollar orada dayatılır.
@@ -892,6 +907,52 @@ mio_ar_write() {
     return 0
 }
 
+# Teşhis: bir .deb neden çevrilemiyor? Hiçbir şeyi değiştirmez.
+#   deb_report <dosya.deb>
+deb_report() {
+    [ -n "${1:-}" ] || { printf 'kullanım: mio deb-cevir -t <paket.deb>\n' >&2; return 2; }
+    _dr_deb="$1"
+    printf 'paket: %s\n' "$_dr_deb"
+    [ -f "$_dr_deb" ] || { printf '  YOK: dosya bulunamadı\n' >&2; return 1; }
+    printf '  boyut: %s bayt\n' "$(wc -c < "$_dr_deb" 2>/dev/null | tr -d ' ')"
+    printf '  yazılabilir: '
+    if [ -w "$_dr_deb" ]; then printf 'evet\n'; else printf 'HAYIR (dönüştürülen paket yazılamaz, apt önbelleği salt-okunur olabilir)\n'; fi
+    printf '  önek: %s\n' "$PREFIX"
+    for t in dpkg-deb dpkg tar ar; do
+        p=""
+        for c in "$PREFIX/bin/$t" "$t"; do
+            command -v "$c" >/dev/null 2>&1 && { p="$c"; break; }
+        done
+        printf '  %-8s %s\n' "$t" "${p:-YOK}"
+    done
+    printf '  TMPDIR: %s\n' "${TMPDIR:-<yok>}"
+    _dr_dd=""
+    for c in "$PREFIX/bin/dpkg-deb" dpkg-deb; do
+        command -v "$c" >/dev/null 2>&1 && { _dr_dd="$c"; break; }
+    done
+    if [ -n "$_dr_dd" ]; then
+        printf '  listede com.termux: %s yol\n' "$("$_dr_dd" -c "$_dr_deb" 2>/dev/null | grep -c 'com\.termux')"
+        printf '  kontrolde com.termux: '
+        if "$_dr_dd" --ctrl-tarfile "$_dr_deb" 2>/dev/null | tar -xzO 2>/dev/null | grep -qa 'com\.termux'; then
+            printf 'VAR\n'
+        else
+            printf 'yok ya da okunamadı\n'
+        fi
+        # aynı işlemi geçici bir kopya üzerinde dene: gerçek paket bozulmadan nokta tespiti
+        _dr_tmp="${TMPDIR:-$PREFIX/tmp}/mio-deb-test-$$.deb"
+        case "$_dr_tmp" in */mio-deb-test-*) : ;; *) _dr_tmp="$PREFIX/tmp/mio-deb-test-$$.deb" ;; esac
+        if cp "$_dr_deb" "$_dr_tmp" 2>/dev/null; then
+            printf '  deneme (geçici kopya): '
+            if mio_convert_deb "$_dr_tmp" 2>&1 | sed 's/^/    /'; then :; fi
+            printf '\n'
+            rm -f "$_dr_tmp" 2>/dev/null
+        else
+            printf '  deneme: geçici kopya yazılamadı (%s)\n' "$_dr_tmp"
+        fi
+    fi
+    return 0
+}
+
 # Bir .deb dosyasını `com.mio` yollarıyla YERİNDE yeniden yazar.
 #   1) com.termux ağacını com.mio ağacına taşır (kontrol dosyaları dahil)
 #   2) maint script/conffiles/betik içeriklerini çevirir; ELF içindeki yolu sabit uzunlukta yazar
@@ -907,14 +968,24 @@ mio_convert_deb() {
     done
     [ -n "$_ddpkg" ] || { printf 'mio: dpkg-deb yok, paket çevrilemedi\n' >&2; return 1; }
 
-    # Hızlı yol: paket zaten com.mio yollarıyla paketlenmişse dokunma
-    if ! "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
-        return 0
+    # Hızlı yol: paket GERÇEKTEN com.mio yolluysa dokunma. Yalnız dosya listesine bakmak
+    # yetmez: liste temiz olsa da kontrol betiklerinde (postinst shebang'i, conffiles) eski
+    # önek kalabilir; o yüzden kontrol tar'ı da taranır.
+    _need=0
+    if "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
+        _need=1
+    elif "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | tar -xzO 2>/dev/null | grep -qa 'com\.termux'; then
+        _need=1
     fi
+    [ "$_need" -eq 1 ] || return 0
 
-    _work="$PREFIX/tmp/mio-deb-$$"
+    _base="${TMPDIR:-}"
+    case "$_base" in
+        ""|none|/nonexistent|/) _base="$PREFIX/tmp" ;;
+    esac
+    _work="$_base/mio-deb-$$"
     rm -rf "$_work" 2>/dev/null
-    mkdir -p "$PREFIX/tmp" "$_work/root" 2>/dev/null || return 1
+    mkdir -p "$_base" "$_work/root" 2>/dev/null || return 1
     if ! "$_ddpkg" -R "$_deb" "$_work/root" >/dev/null 2>&1; then
         printf 'mio: paket açılamadı: %s\n' "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
@@ -933,9 +1004,12 @@ mio_convert_deb() {
         if [ -d "$_target" ]; then
             # iki ağaç birleşecek: içeriği kopyala, sonra eski ağacı sil
             cp -a "$_legacy/." "$_target/" 2>/dev/null
-            rm -rf "$_legacy" 2>/dev/null
         else
             mv "$_legacy" "$_target" 2>/dev/null
+        fi
+        # mv başarısız olduysa (farklı dosya sistemi, meşgul dizin, izin) kopyala+sil
+        if [ -e "$_legacy" ] && [ -d "$_target" ]; then
+            cp -a "$_legacy/." "$_target/" 2>/dev/null
         fi
         if [ -e "$_legacy" ]; then
             chmod -R u+rwX "$_legacy" 2>/dev/null
@@ -1018,7 +1092,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=5" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=7" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1035,28 +1109,60 @@ install_dpkg_wrapper() {
 #!@@PREFIX@@/bin/sh
 # mio dpkg sarmalayıcısı: com.termux yollu .deb dosyalarını com.mio için yeniden paketler.
 # Dönüştürme mantığı bu dosyada kopya tutulmaz; `mio` betiğine devredilir (tek kaynak).
-MIO_DPKG_WRAPPER_VERSION=5
-bin=$(dirname "$0")
+#
+# Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
+# yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
+# ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
+MIO_DPKG_WRAPPER_VERSION=7
+bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
+case "$bin" in
+    ""|/) bin=@@PREFIX@@/bin ;;
+esac
 prefix=$(dirname "$bin")
 real="$bin/dpkg.mio-real"
+mio="$bin/mio"
+failed=0
 
 # dpkg yardımcı programlarını (ldconfig, start-stop-daemon, sh, tar, ...) önekte arar; eksikse
 # "N expected programs not found in PATH" deyip unpack etmeden durur.
 case ":$PATH:" in
-    *":$prefix/bin:"*) : ;;
-    *) PATH="$prefix/bin:$PATH" ; export PATH ;;
+    *":$bin:"*) : ;;
+    *) PATH="$bin:$PATH" ; export PATH ;;
 esac
 
-# Paket yolu verilmiş mi? (yalnız --unpack/--install/-i gibi çağrılarda .deb gelir)
+if [ ! -x "$real" ]; then
+    # Yedek yoksa (çok eski kurulum) bu dosyanın kendisi gerçek dpkg'dir: dönüştür, sonra dpkg'ye
+    # bırak. Sonsuz döngüye girmemek için exec yerine burada bitirilir.
+    printf 'mio: gerçek dpkg bulunamadı: %s\n' "$real" >&2
+    exit 1
+fi
+
 for a in "$@"; do
     case "$a" in
         *.deb)
-            if [ -x "$bin/mio" ]; then
-                "$bin/mio" deb-cevir "$a" || :
+            [ -f "$a" ] || continue
+            if [ ! -r "$a" ]; then
+                printf 'mio: paket okunamıyor: %s\n' "$a" >&2
+                failed=1
+                continue
+            fi
+            if [ -x "$mio" ]; then
+                if ! "$mio" deb-cevir "$a"; then
+                    printf 'mio: paket com.mio yollarına çevrilemedi, dpkg durduruldu: %s\n' "$a" >&2
+                    printf 'mio: ayrıntı için: mio deb-cevir "%s"\n' "$a" >&2
+                    failed=1
+                fi
+            else
+                printf 'mio: %s yok, paket çevrilemedi: %s\n' "$mio" "$a" >&2
+                failed=1
             fi
             ;;
     esac
 done
+
+if [ "$failed" -ne 0 ]; then
+    exit 1
+fi
 
 exec "$real" "$@"
 MIO_EOF
@@ -1255,7 +1361,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 29 (menü, ses, paketler, istek dosyası, güvenli depo, sarmalayıcı v25, hız testli depo, salt-okunur deb ağacı düzeltmesi)\n'
+    printf 'mio sürüm: 30 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v7, salt-okunur deb düzeltmesi)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -1997,17 +2103,23 @@ case "$COMMAND" in
         printf 'paket kurma provası: '
         probe_dir="$PREFIX/tmp/mio-probe"
         probe_admin="$probe_dir/admin"
-        probe_marker="$PREFIX/share/mio-probe"
+        # İşaret dosyası HER çalıştırmada farklı: eskisi silinemezse (salt-okunur ağaç) prova
+        # yanlışlıkla "tamam" demesin.
+        probe_name="mio-probe-$$"
+        probe_marker="$PREFIX/share/$probe_name"
         probe_ok=0
         probe_ran=0
         probe_stage="hazırlık"
         PATH="$PREFIX/bin:$PATH" ; export PATH
+        # Önceki provadan kalan salt-okunur ağaç silinemeyebilir: önce izin ver, sonra sil
+        chmod -R u+rwX "$probe_dir" 2>/dev/null
         rm -rf "$probe_dir" "$probe_marker" 2>/dev/null
-        mkdir -p "$probe_dir/root/DEBIAN" "$probe_dir/root/data/data/com.termux/files/usr/share/mio-probe" \
+        rm -rf "$PREFIX"/share/mio-probe* 2>/dev/null
+        mkdir -p "$probe_dir/root/DEBIAN" "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name" \
                  "$probe_admin/info" "$probe_admin/updates" 2>/dev/null
         printf 'Package: mio-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: mio <mio@local>\nDescription: mio install probe\n' \
             > "$probe_dir/root/DEBIAN/control" 2>/dev/null
-        printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/mio-probe/probe" 2>/dev/null
+        printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
         # Salt-okunur dosyalar: `dpkg-deb -R` paketlenen izinleri geri verir ve eski ağacın
         # silinmesi bu yüzden başarısız olabiliyordu. Prova bunu da kapsasın.
         chmod -R a-w "$probe_dir/root/data/data/com.termux" 2>/dev/null
@@ -2042,7 +2154,31 @@ case "$COMMAND" in
             printf 'BAŞARISIZ (kuruldu ama dosya com.mio önekinde değil)\n'
             grep -m1 -i "error\|denied" "$probe_dir/log" 2>/dev/null | sed 's/^/  /'
         fi
+        chmod -R u+rwX "$probe_dir" 2>/dev/null
         rm -rf "$probe_dir" "$probe_marker" 2>/dev/null
+
+        # 7c) SARMALAYICI ZİNCİRİ: `apt install` gerçekten çeviriciyi kullanıyor mu?
+        #     Eskiden dpkg sarmalayıcısı eski sürümde kalabiliyor, dönüşüm hatasını yutuyor ve
+        #     dpkg orijinal com.termux paketiyle "çıkış kodu 1" veriyordu. Burada zincirin üç
+        #     halkası da (apt sarmalayıcısı -> mio -> dpkg sarmalayıcısı) doğrulanır.
+        printf 'sarmalayıcı zinciri: '
+        _chain_ok=1
+        for n in apt apt-get pkg; do
+            [ -x "$PREFIX/bin/$n" ] || continue
+            if grep -q "MIO_WRAPPER_VERSION" "$PREFIX/bin/$n" 2>/dev/null; then :; else _chain_ok=0; fi
+        done
+        if [ -x "$PREFIX/bin/dpkg" ] && grep -q "dpkg-sarmala\|deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null; then :; else _chain_ok=0; fi
+        if [ "$_chain_ok" -eq 1 ]; then
+            printf 'tamam (apt -> mio -> dpkg)\n'
+        else
+            printf 'EKSİK — onarılıyor\n'
+            install_apt_wrappers >/dev/null 2>&1
+            if [ -x "$PREFIX/bin/dpkg" ] && grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null; then
+                printf '  onarıldı: dpkg sarmalayıcısı güncel\n'
+            else
+                printf '  ONARILAMADI: %s/bin/dpkg yazılamıyor\n' "$PREFIX"
+            fi
+        fi
 
         printf '\nSONUÇ: '
         if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
@@ -2054,8 +2190,34 @@ case "$COMMAND" in
         fi
         exit 0
         ;;
+    sarmalayici|sarmalayıcı|wrappers)
+        # Uygulama her açılışta çağırır: ağa çıkmadan yalnız apt/dpkg sarmalayıcılarını tazeler.
+        # (apt-fix bunun üstüne teşhis + hız testi yapar; burada o kadarı gereksiz.)
+        install_apt_wrappers >/dev/null 2>&1
+        ok=1
+        for n in apt apt-get pkg dpkg; do
+            [ -x "$PREFIX/bin/$n" ] || continue
+            grep -q "MIO_.*WRAPPER_VERSION" "$PREFIX/bin/$n" 2>/dev/null || ok=0
+        done
+        if [ -x "$PREFIX/bin/dpkg" ]; then
+            grep -q "deb-cevir" "$PREFIX/bin/dpkg" 2>/dev/null || ok=0
+        fi
+        [ "$ok" -eq 1 ] && printf 'mio: sarmalayıcılar hazır\n'
+        exit $((1 - ok))
+        ;;
+    dpkg-sarmala|dpkg-sarmal|sarmala)
+        # apt sarmalayıcısının çağırdığı iç komut: dpkg sarmalayıcısını tazeler
+        install_dpkg_wrapper
+        exit $?
+        ;;
     deb-cevir|debcevir|convert-deb)
-        # dpkg sarmalayıcısının çağırdığı iç komut: .deb dosyalarını com.mio yollarına çevirir
+        # dpkg sarmalayıcısının çağırdığı iç komut: .deb dosyalarını com.mio yollarına çevirir.
+        # `mio deb-cevir -t <deb>`: dönüştürmez, yalnız neyin eksik olduğunu söyler (cihaz teşhisi).
+        if [ "${1:-}" = "-t" ] || [ "${1:-}" = "--test" ]; then
+            shift
+            deb_report "$@"
+            exit $?
+        fi
         rc=0
         for f in "$@"; do
             mio_convert_deb "$f" || rc=1
