@@ -1287,6 +1287,51 @@ mio_convert_deb() {
 #   "half-installed" durumuna alınır (dpkg bunları sonra --configure ile toparlayabilir)
 # - updates/ kilit dosyası gibi artıklar temizlenir
 #   mio_repair_dpkg_db
+# Önek içindeki DİZİNLERİ yazılabilir yapar.
+#
+# dpkg bir dosyayı kurarken hedef dizine `<ad>.dpkg-new` yazar. Dizin yazılabilir değilse:
+#   dpkg: error processing archive ...:
+#    unable to create '.../share/x/probe.dpkg-new' ...: Permission denied
+#     error creating directory './data/data/com.mio/files/usr/share/x': Permission denied
+# Bu, paketlerin kendi dizinlerini 0555 gibi modlarla taşımasından ya da öneğin bir ara
+# adımda izinlerinin bozulmasından kaynaklanır. Dizinler kullanıcının kendi özel alanı
+# olduğu için yalnız SAHİBİNE yazma/çalıştırma izni eklenir (755 gibi sıkılaştırma yapılmaz).
+#   mio_fix_prefix_perms
+mio_fix_prefix_perms() {
+    _pp="${PREFIX:-/data/data/com.mio/files/usr}"
+    [ -d "$_pp" ] || return 0
+    _ppn=0
+
+    # 1) sık kullanılan üst dizinler (hızlı yol; tam tarama pahalı olabilir)
+    for _d in "$_pp" "$_pp/bin" "$_pp/lib" "$_pp/libexec" "$_pp/share" "$_pp/etc" "$_pp/var" \
+              "$_pp/tmp" "$_pp/opt" "$_pp/include" "$_pp/src" "$_pp/var/lib/dpkg" \
+              "$_pp/var/lib/dpkg/info" "$_pp/var/lib/dpkg/updates" "$_pp/var/cache/apt" \
+              "$_pp/var/cache/apt/archives" "$_pp/var/log" "$_pp/var/log/apt"; do
+        [ -d "$_d" ] || continue
+        [ -w "$_d" ] && continue
+        chmod u+rwx "$_d" 2>/dev/null && _ppn=$((_ppn + 1))
+    done
+
+    # 2) share/bin/lib altında yazılamaz kalan dizinler (kurulan paketler 0555 bırakabiliyor)
+    #    Sayaç alt kabukta kaybolmasın diye liste dosyasına yazılıyor.
+    _pplist="/tmp/.mio-ro-dirs-$$"
+    : > "$_pplist" 2>/dev/null
+    for _base in "$_pp/share" "$_pp/bin" "$_pp/lib" "$_pp/libexec" "$_pp/etc"; do
+        [ -d "$_base" ] || continue
+        find "$_base" -type d ! -perm -u+w 2>/dev/null >> "$_pplist"
+    done
+    if [ -s "$_pplist" ]; then
+        while IFS= read -r _d; do
+            chmod u+rwx "$_d" 2>/dev/null && _ppn=$((_ppn + 1))
+        done < "$_pplist"
+    fi
+    rm -f "$_pplist" 2>/dev/null
+
+    MIO_PREFIX_FIXED=$(( ${MIO_PREFIX_FIXED:-0} + _ppn ))
+    [ "$_ppn" -gt 0 ] && printf 'mio: önek dizin izinleri düzeltildi (%s dizin)\n' "$_ppn" >&2
+    return 0
+}
+
 mio_repair_dpkg_db() {
     _db="${PREFIX:-/data/data/com.mio/files/usr}/var/lib/dpkg"
     [ -d "$_db" ] || return 0
@@ -1396,7 +1441,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=11" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=12" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1417,7 +1462,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=11
+MIO_DPKG_WRAPPER_VERSION=12
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1466,6 +1511,13 @@ done
 
 if [ "$failed" -ne 0 ]; then
     exit 1
+fi
+
+# Sürüm 12: `apt install` bu sarmalayıcıdan geçer, `mio` betiğinden geçmez. Paket kurulumu
+# 0555 kalmış bir $PREFIX/share dizininde "unable to create ...dpkg-new: Permission denied"
+# ile düşüyordu; dpkg çağrılmadan önce izinleri onar.
+if [ -x "$mio" ]; then
+    MIO_WRAPPER_QUIET=1 "$mio" sarmalayici >/dev/null 2>&1 || :
 fi
 
 exec "$real" "$@"
@@ -1560,6 +1612,7 @@ MIO_EOF
 
 install_apt_wrappers() {
     mio_repair_dpkg_db
+    mio_fix_prefix_perms
     install_apt_wrapper pkg
     install_apt_wrapper apt
     install_apt_wrapper apt-get
@@ -1750,7 +1803,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 35 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
+    printf 'mio sürüm: 36 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2188,6 +2241,15 @@ fi
 COMMAND="$1"
 shift
 
+# Önek dizinlerinin iznini ONARIMDAN ÖNCE ölç: fix_sources -> install_apt_wrappers ->
+# mio_fix_prefix_perms zinciri izinleri düzeltiyor, bu yüzden ölçüm burada yapılmalı.
+MIO_PREFIX_RO=0
+for _pd in "$PREFIX/share" "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/etc" "$PREFIX/var" "$PREFIX/tmp"; do
+    [ -d "$_pd" ] || continue
+    [ -w "$_pd" ] || MIO_PREFIX_RO=$((MIO_PREFIX_RO + 1))
+done
+export MIO_PREFIX_RO
+
 # Her komuttan önce depo dosyasını doğrula/onar: bozuksa pkg ve apt hiç çalışmaz
 if [ -d "${PREFIX:-}/etc/apt" ]; then
     fix_sources >/dev/null 2>&1
@@ -2349,6 +2411,20 @@ case "$COMMAND" in
         # Her şeyi sırayla onarır ve ağa çıkmadan doğrular. Tek komutla "çalışıyor/çalışmıyor" der.
         printf '=== mio apt onarımı ===\n'
 
+        # 0) önek dizin izinlerini ONARIMDAN ÖNCE ölç: paketler 0555 dizin bırakabiliyor ve
+        #    dpkg o zaman "unable to create ...dpkg-new: Permission denied" veriyor.
+        #    Değer preflight'tan (MIO_PREFIX_RO) geliyor; orada ölçüldü çünkü fix_sources
+        #    zaten install_apt_wrappers üzerinden izinleri düzeltiyor.
+        _ro_before=${MIO_PREFIX_RO:-}
+        if [ -z "$_ro_before" ]; then
+            _ro_before=0
+            for _d in "$PREFIX/share" "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/etc" "$PREFIX/var" "$PREFIX/tmp"; do
+                [ -d "$_d" ] || continue
+                [ -w "$_d" ] || _ro_before=$((_ro_before + 1))
+            done
+        fi
+        mio_fix_prefix_perms
+
         # 1) eksik dizinler
         for d in "$PREFIX/var/lib/apt/lists/partial" "$PREFIX/var/cache/apt/archives/partial" \
                  "$PREFIX/var/lib/dpkg" "$PREFIX/var/log/apt" "$PREFIX/etc/apt/trusted.gpg.d" \
@@ -2444,6 +2520,18 @@ case "$COMMAND" in
         fi
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
+        # önek dizinleri yazılabilir mi (paketler 0555 dizin bırakabiliyor)
+        printf 'önek izinleri: '
+        if [ "${_ro_before:-0}" -gt 0 ]; then
+            printf '%s dizin salt-okunurdu, düzeltildi\n' "$_ro_before"
+        elif [ "${MIO_PREFIX_FIXED:-0}" -gt 0 ]; then
+            printf '%s dizin düzeltildi\n' "$MIO_PREFIX_FIXED"
+        elif [ -w "$PREFIX/share" ] || [ ! -d "$PREFIX/share" ]; then
+            printf 'tamam\n'
+        else
+            printf 'DÜZELTİLEMEDİ (%s/share yazılamıyor)\n' "$PREFIX"
+        fi
+
         # dpkg veritabanı: eksik/yazılamaz çalışma dizinleri ve yarıda kalan kurulum artıkları
         printf 'dpkg veritabanı: '
         if [ -d "$PREFIX/var/lib/dpkg" ]; then
@@ -2538,7 +2626,10 @@ case "$COMMAND" in
         printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
         # Salt-okunur dosyalar: `dpkg-deb -R` paketlenen izinleri geri verir ve eski ağacın
         # silinmesi bu yüzden başarısız olabiliyordu. Prova bunu da kapsasın.
+        # Dizin izni de sınansın: paketler dizinleri 0555 ile taşıyabiliyor ve dpkg o zaman
+        # "unable to create ...dpkg-new: Permission denied" veriyor.
         chmod -R a-w "$probe_dir/root/data/data/com.termux" 2>/dev/null
+        chmod 555 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name" 2>/dev/null
         : > "$probe_admin/status"
         : > "$probe_admin/available"
 
