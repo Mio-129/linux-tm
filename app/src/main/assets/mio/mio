@@ -847,8 +847,20 @@ mio_pack_deb() {
     _pk_dir="$_pk_root.mio-pack"
     rm -rf "$_pk_dir" 2>/dev/null
     mkdir -p "$_pk_dir/ctl" "$_pk_dir/data" 2>/dev/null || return 1
+    # Kontrol dosyaları: Android'de `cp -a` (korumalı mod bitleri) sessizce başarısız olabiliyor,
+    # bu yüzden önce kopyalanır, olmazsa `cat` ile tek tek yazılır.
     if [ -d "$_pk_root/DEBIAN" ]; then
         cp -a "$_pk_root/DEBIAN/." "$_pk_dir/ctl/" 2>/dev/null
+        for _pk_f in "$_pk_root/DEBIAN"/* "$_pk_root/DEBIAN"/.[!.]*; do
+            [ -f "$_pk_f" ] || continue
+            [ -f "$_pk_dir/ctl/${_pk_f##*/}" ] && [ -s "$_pk_dir/ctl/${_pk_f##*/}" ] && continue
+            cat "$_pk_f" > "$_pk_dir/ctl/${_pk_f##*/}" 2>/dev/null
+            chmod 755 "$_pk_dir/ctl/${_pk_f##*/}" 2>/dev/null
+        done
+        # maint script'ler çalıştırılabilir olmalı (dpkg aksi halde "not executable" diyebilir)
+        for _pk_f in postinst preinst postrm prerm config; do
+            [ -f "$_pk_dir/ctl/$_pk_f" ] && chmod 755 "$_pk_dir/ctl/$_pk_f" 2>/dev/null
+        done
     fi
     # data.tar: kök içindeki her şey, DEBIAN dizini HARİÇ (dpkg kontrol dizinini data.tar'dan
     # okumaz; içinde kalırsa "error creating directory './DEBIAN': Permission denied" verir).
@@ -907,6 +919,20 @@ mio_ar_write() {
     return 0
 }
 
+# Metin olarak güvenle değiştirilemeyecek dosya türleri: sıkıştırılmış arşivler ve ikili
+# biçimler. Bunların İÇİNDEKİ yol metni değiştirilmez; doğrulama da bu dosyaları atlar
+# (aksi halde çevrilemeyen bir .gz yüzünden paket "çevrilemedi" sayılırdı).
+#   mio_binary_like <dosya> -> 0 ise atlanmalı
+mio_binary_like() {
+    case "$1" in
+        *.gz|*.tgz|*.xz|*.lzma|*.bz2|*.zip|*.jar|*.apk|*.png|*.jpg|*.jpeg|*.gif|*.webp|\
+        *.ttf|*.otf|*.woff|*.woff2|*.db|*.sqlite|*.pyc|*.so|*.a|*.o|*.mo|*.ico|*.pdf|\
+        *.gz.*|*.7z|*.rar|*.zst|*.lz4)
+            return 0 ;;
+    esac
+    return 1
+}
+
 # Teşhis: bir .deb neden çevrilemiyor? Hiçbir şeyi değiştirmez.
 #   deb_report <dosya.deb>
 deb_report() {
@@ -916,35 +942,55 @@ deb_report() {
     [ -f "$_dr_deb" ] || { printf '  YOK: dosya bulunamadı\n' >&2; return 1; }
     printf '  boyut: %s bayt\n' "$(wc -c < "$_dr_deb" 2>/dev/null | tr -d ' ')"
     printf '  yazılabilir: '
-    if [ -w "$_dr_deb" ]; then printf 'evet\n'; else printf 'HAYIR (dönüştürülen paket yazılamaz, apt önbelleği salt-okunur olabilir)\n'; fi
+    if [ -w "$_dr_deb" ]; then printf 'evet\n'; else printf 'HAYIR (dönüştürülen paket yazılamaz)\n'; fi
     printf '  önek: %s\n' "$PREFIX"
-    for t in dpkg-deb dpkg tar ar; do
-        p=""
+    for t in dpkg-deb dpkg tar; do
+        _p=""
         for c in "$PREFIX/bin/$t" "$t"; do
-            command -v "$c" >/dev/null 2>&1 && { p="$c"; break; }
+            command -v "$c" >/dev/null 2>&1 && { _p="$c"; break; }
         done
-        printf '  %-8s %s\n' "$t" "${p:-YOK}"
+        printf '  %-8s %s\n' "$t" "${_p:-YOK}"
     done
-    printf '  TMPDIR: %s\n' "${TMPDIR:-<yok>}"
     _dr_dd=""
     for c in "$PREFIX/bin/dpkg-deb" dpkg-deb; do
         command -v "$c" >/dev/null 2>&1 && { _dr_dd="$c"; break; }
     done
+    _dr_tar=""
+    for c in "$PREFIX/bin/tar" tar; do
+        command -v "$c" >/dev/null 2>&1 && { _dr_tar="$c"; break; }
+    done
     if [ -n "$_dr_dd" ]; then
         printf '  listede com.termux: %s yol\n' "$("$_dr_dd" -c "$_dr_deb" 2>/dev/null | grep -c 'com\.termux')"
         printf '  kontrolde com.termux: '
-        if "$_dr_dd" --ctrl-tarfile "$_dr_deb" 2>/dev/null | tar -xzO 2>/dev/null | grep -qa 'com\.termux'; then
+        if "$_dr_dd" --ctrl-tarfile "$_dr_deb" 2>/dev/null | "$_dr_tar" -xzO 2>/dev/null | grep -qa 'com\.termux'; then
             printf 'VAR\n'
         else
-            printf 'yok ya da okunamadı\n'
+            printf 'yok\n'
         fi
-        # aynı işlemi geçici bir kopya üzerinde dene: gerçek paket bozulmadan nokta tespiti
-        _dr_tmp="${TMPDIR:-$PREFIX/tmp}/mio-deb-test-$$.deb"
-        case "$_dr_tmp" in */mio-deb-test-*) : ;; *) _dr_tmp="$PREFIX/tmp/mio-deb-test-$$.deb" ;; esac
+        printf '  tar dönüşümü (--transform): '
+        if [ -n "$_dr_tar" ]; then
+            # aynı dosya sisteminde küçük bir dizin açıp gerçek bir arşivle denenir
+            _dr_chk="$PREFIX/tmp/mio-tar-check"
+            rm -rf "$_dr_chk" 2>/dev/null
+            mkdir -p "$_dr_chk/aa" 2>/dev/null
+            : > "$_dr_chk/aa/f" 2>/dev/null
+            ( cd "$_dr_chk" && "$_dr_tar" --transform 's|aa|bb|' -cf "$_dr_chk/out.tar" aa ) >/dev/null 2>&1
+            _dr_t=""
+            [ -s "$_dr_chk/out.tar" ] && _dr_t=$( "$_dr_tar" -tf "$_dr_chk/out.tar" 2>/dev/null | head -n 3 )
+            rm -rf "$_dr_chk" 2>/dev/null
+            if printf '%s' "$_dr_t" | grep -q 'bb'; then
+                printf 'destekliyor\n'
+            else
+                printf 'YOK (üye üye yedek yol kullanılacak)\n'
+            fi
+        else
+            printf 'tar YOK\n'
+        fi
+        # gerçek dönüşümü geçici kopya üzerinde dene
+        _dr_tmp="$PREFIX/tmp/mio-deb-test-$$.deb"
         if cp "$_dr_deb" "$_dr_tmp" 2>/dev/null; then
             printf '  deneme (geçici kopya): '
             if mio_convert_deb "$_dr_tmp" 2>&1 | sed 's/^/    /'; then :; fi
-            printf '\n'
             rm -f "$_dr_tmp" 2>/dev/null
         else
             printf '  deneme: geçici kopya yazılamadı (%s)\n' "$_dr_tmp"
@@ -968,13 +1014,31 @@ mio_convert_deb() {
     done
     [ -n "$_ddpkg" ] || { printf 'mio: dpkg-deb yok, paket çevrilemedi\n' >&2; return 1; }
 
-    # Hızlı yol: paket GERÇEKTEN com.mio yolluysa dokunma. Yalnız dosya listesine bakmak
-    # yetmez: liste temiz olsa da kontrol betiklerinde (postinst shebang'i, conffiles) eski
-    # önek kalabilir; o yüzden kontrol tar'ı da taranır.
+    # tar seçimi: `--transform` destekleyeni tercih et (GNU tar). Cihazda bazen `$PREFIX/bin/tar`
+    # yok ya da toybox tar (transform yok); o zaman üye üye yedek yol kullanılır.
+    _tar=""
+    _tar_tf=0
+    for c in "$PREFIX/bin/tar" tar "$PREFIX/bin/gtar" gtar; do
+        command -v "$c" >/dev/null 2>&1 || continue
+        _chk="$PREFIX/tmp/mio-tar-sel"
+        rm -rf "$_chk" 2>/dev/null
+        mkdir -p "$_chk/aa" 2>/dev/null
+        : > "$_chk/aa/f" 2>/dev/null
+        ( cd "$_chk" && "$c" --transform 's|aa|bb|' -cf "$_chk/out.tar" aa ) >/dev/null 2>&1
+        _out=""
+        [ -s "$_chk/out.tar" ] && _out=$( "$c" -tf "$_chk/out.tar" 2>/dev/null | head -n 3 )
+        rm -rf "$_chk" 2>/dev/null
+        if [ -z "$_tar" ]; then _tar="$c"; fi
+        case "$_out" in
+            *bb*) _tar="$c"; _tar_tf=1; break ;;
+        esac
+    done
+
+    # Hızlı yol: paket GERÇEKTEN com.mio yolluysa dokunma.
     _need=0
     if "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
         _need=1
-    elif "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | tar -xzO 2>/dev/null | grep -qa 'com\.termux'; then
+    elif "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | "$_tar" -xzO 2>/dev/null | grep -qa 'com\.termux'; then
         _need=1
     fi
     [ "$_need" -eq 1 ] || return 0
@@ -984,81 +1048,146 @@ mio_convert_deb() {
         ""|none|/nonexistent|/) _base="$PREFIX/tmp" ;;
     esac
     _work="$_base/mio-deb-$$"
+    chmod -R u+rwX "$_work" 2>/dev/null
     rm -rf "$_work" 2>/dev/null
-    mkdir -p "$_base" "$_work/root" 2>/dev/null || return 1
-    if ! "$_ddpkg" -R "$_deb" "$_work/root" >/dev/null 2>&1; then
-        printf 'mio: paket açılamadı: %s\n' "$(basename "$_deb")" >&2
-        rm -rf "$_work" 2>/dev/null
-        return 1
-    fi
+    mkdir -p "$_base" "$_work/root" "$_work/ctl" 2>/dev/null || return 1
     _root="$_work/root"
+    _ctl="$_work/ctl"
 
-    # 1) com.termux ağacını com.mio'ya taşı.
-    #    `dpkg-deb -R` çıkarılan dosyaları salt-okunur yapar; `rm -rf` o zaman başarısız olur ve
-    #    ağaç yerinde kalır (cihazda "12 yolda com.termux kaldı" hatası buydu). Bu yüzden önce
-    #    yazma izni verilir, sonra `mv` (rename) denenir; mv aynı dosya sisteminde izin istemez.
-    _legacy="$_root/data/data/com.termux"
-    _target="$_root/data/data/com.mio"
-    if [ -d "$_legacy" ]; then
-        chmod -R u+rwX "$_legacy" 2>/dev/null
-        if [ -d "$_target" ]; then
-            # iki ağaç birleşecek: içeriği kopyala, sonra eski ağacı sil
-            cp -a "$_legacy/." "$_target/" 2>/dev/null
-        else
-            mv "$_legacy" "$_target" 2>/dev/null
+    # ÖNEMLİ: ağaç ARTIK TAŞINMIYOR. `dpkg-deb -R` ile çıkarılan ağacı `mv`/`rm` ile yeniden
+    # adlandırmak Android'de güvenilir değil (cihazda "12 yolda com.termux kaldı" hatası buydu:
+    # komutlar hata vermeden hiçbir şey yapmıyordu). Bunun yerine yollar ÇIKARMA SIRASINDA
+    # değiştirilir: GNU tar `--transform`, desteklemiyorsa her üye `tar -O` ile tek tek yazılır.
+    _conv_ok=0
+    if [ -n "$_tar" ] && [ "$_tar_tf" -eq 1 ]; then
+        # 1) veri: data.tar akışı doğrudan dönüştürülerek açılır
+        if "$_ddpkg" --fsys-tarfile "$_deb" 2>/dev/null |
+           ( cd "$_root" && "$_tar" -xf - --transform 's|com\.termux|com.mio|g' ) >/dev/null 2>&1; then
+            _conv_ok=1
         fi
-        # mv başarısız olduysa (farklı dosya sistemi, meşgul dizin, izin) kopyala+sil
-        if [ -e "$_legacy" ] && [ -d "$_target" ]; then
-            cp -a "$_legacy/." "$_target/" 2>/dev/null
-        fi
-        if [ -e "$_legacy" ]; then
-            chmod -R u+rwX "$_legacy" 2>/dev/null
-            rm -rf "$_legacy" 2>/dev/null
+        # 2) kontrol dosyaları (aynı dönüşümle)
+        if [ "$_conv_ok" -eq 1 ]; then
+            "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null |
+                ( cd "$_ctl" && "$_tar" -xf - --transform 's|com\.termux|com.mio|g' ) >/dev/null 2>&1 ||
+                "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | ( cd "$_ctl" && "$_tar" -xf - ) >/dev/null 2>&1
         fi
     fi
-    if [ -e "$_legacy" ]; then
-        printf 'mio: eski önek ağacı silinemedi: %s\n' "$(basename "$_deb")" >&2
+
+    if [ "$_conv_ok" -eq 0 ] && [ -n "$_tar" ]; then
+        # Yedek yol (tar --transform yok): dpkg-deb -R ile aç, sonra taşımadan, üye üye yaz.
+        rm -rf "$_work/raw" 2>/dev/null
+        mkdir -p "$_work/raw" 2>/dev/null
+        if ! "$_ddpkg" -R "$_deb" "$_work/raw" >/dev/null 2>&1; then
+            printf 'mio: paket açılamadı: %s\n' "$(basename "$_deb")" >&2
+            rm -rf "$_work" 2>/dev/null
+            return 1
+        fi
+        if [ -d "$_work/raw/DEBIAN" ]; then
+            cp -a "$_work/raw/DEBIAN/." "$_ctl/" 2>/dev/null
+            for _f in "$_work/raw/DEBIAN"/*; do
+                [ -f "$_f" ] || continue
+                cat "$_f" > "$_ctl/${_f##*/}" 2>/dev/null
+            done
+        fi
+        ( cd "$_work/raw" && "$_tar" -cf "$_work/raw.tar" . ) >/dev/null 2>&1
+        if [ ! -s "$_work/raw.tar" ]; then
+            printf 'mio: paket açılamadı (tar): %s\n' "$(basename "$_deb")" >&2
+            rm -rf "$_work" 2>/dev/null
+            return 1
+        fi
+        # Üye üye kopyalama: symlink, dizin ve normal dosya AYRI ele alınır. Aksi halde
+        # symlink'ler sıfır baytlık normal dosyaya dönüşüyor ve paket çalışmıyordu.
+        "$_tar" -tvf "$_work/raw.tar" 2>/dev/null | while IFS= read -r _line; do
+            _mode=$(printf '%s' "$_line" | cut -c1)
+            _p=$(printf '%s' "$_line" | sed -e 's|^[^ ]* *[^ ]* *[^ ]* *[^ ]* *[^ ]* *||' -e 's| link to .*||' -e 's| -> .*||')
+            case "$_p" in
+                ""|./DEBIAN|./DEBIAN/*|DEBIAN|DEBIAN/*) continue ;;
+            esac
+            _np=$(printf '%s' "$_p" | sed 's|com\.termux|com.mio|g')
+            _d=$(dirname "$_np")
+            [ "$_d" = "." ] || mkdir -p "$_root/$_d" 2>/dev/null
+            case "$_mode" in
+                d) mkdir -p "$_root/$_np" 2>/dev/null ;;
+                l)
+                    _lt=$(printf '%s' "$_line" | sed -e 's|.* -> ||' -e 's|.* link to ||')
+                    case "$_lt" in
+                        ""|"$_p") continue ;;
+                    esac
+                    _lt=$(printf '%s' "$_lt" | sed 's|com\.termux|com.mio|g')
+                    ln -sfn "$_lt" "$_root/$_np" 2>/dev/null
+                    ;;
+                *)
+                    "$_tar" -xOf "$_work/raw.tar" "$_p" > "$_root/$_np" 2>/dev/null
+                    case "$_p" in
+                        */bin/*|*/sbin/*|*/libexec/*|*.sh) chmod 755 "$_root/$_np" 2>/dev/null ;;
+                    esac
+                    ;;
+            esac
+        done
+        rm -rf "$_work/raw" "$_work/raw.tar" 2>/dev/null
+    fi
+
+    if [ -z "$_tar" ]; then
+        printf 'mio: tar bulunamadı, paket çevrilemedi: %s\n' "$(basename "$_deb")" >&2
+        rm -rf "$_work" 2>/dev/null
+        return 1
+    fi
+    if [ ! -d "$_root/data/data/com.mio" ] && [ ! -d "$_root/data/data/com.termux" ]; then
+        printf 'mio: paket içeriği çıkarılamadı: %s\n' "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
         return 1
     fi
 
-    # 2a) symlink hedefleri
-    find "$_root" -type l 2>/dev/null | while IFS= read -r _l; do
-        _t=$(readlink "$_l" 2>/dev/null) || continue
-        case "$_t" in
-            *com.termux*)
-                ln -sfn "$(printf '%s' "$_t" | sed 's|/data/data/com\.termux|/data/data/com.mio|g')" "$_l" 2>/dev/null
-                ;;
-        esac
-    done
-
-    # 2b) dosya içerikleri
+    # 3) metin dosyaları: shebang, conffiles, yapılandırma (adlar zaten com.mio)
     find "$_root" -type f 2>/dev/null | while IFS= read -r _f; do
         grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
+        mio_binary_like "$_f" && continue
+        # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan `sed -i` sessizce düşer
+        [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
         if [ "$(head -c 4 "$_f" 2>/dev/null)" = "ELF" ]; then
             # ELF: yol sabit uzunlukta olmalı, aksi halde ikili bozulur
             sed -i 's|/data/data/com\.termux|/data/data/com.mio///|g' "$_f" 2>/dev/null
         else
             sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
+            sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
         fi
     done
+    for _f in "$_ctl"/*; do
+        [ -f "$_f" ] || continue
+        grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
+        sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
+        sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
+    done
+    for _f in postinst preinst postrm prerm config; do
+        [ -f "$_ctl/$_f" ] && chmod 755 "$_ctl/$_f" 2>/dev/null
+    done
 
-    # 3) yeniden paketle
+    # 4) yeniden paketle: DEBIAN dizini kontrol dosyalarından, veri ağacı çıkarılan kökten
+    cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
+    if [ ! -f "$_root/DEBIAN/control" ]; then
+        mkdir -p "$_root/DEBIAN" 2>/dev/null
+        cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
+        for _f in "$_ctl"/*; do
+            [ -f "$_f" ] || continue
+            cat "$_f" > "$_root/DEBIAN/${_f##*/}" 2>/dev/null
+        done
+    fi
     if ! mio_pack_deb "$_root" "$_work/new.deb"; then
         printf 'mio: paket yeniden paketlenemedi: %s\n' "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
         return 1
     fi
 
-    # 3b) yeni pakette com.termux kaldı mı? İki bağımsız kontrol yapılır:
-    #     - paket listesinde (yol adlarında)
-    #     - açılan ağaçtaki dosya içeriklerinde (maint script shebang'i, conffiles, ELF yolu)
+    # 5) DOĞRULA: yeni pakette com.termux kaldı mı?
     _left=$("$_ddpkg" -c "$_work/new.deb" 2>/dev/null | grep -c 'com\.termux')
     [ -n "$_left" ] || _left=0
     if [ "$_left" -eq 0 ]; then
-        # içerikte kalan var mı? (salt dosya adları temiz olsa da shebang eski kalabilir)
-        _inner=$(grep -rl 'com\.termux' "$_root" 2>/dev/null | wc -l | tr -d ' ')
-        [ -n "$_inner" ] || _inner=0
+        _inner=0
+        for _f in $(grep -rl 'com\.termux' "$_root" "$_ctl" 2>/dev/null); do
+            mio_binary_like "$_f" && continue
+            _inner=$((_inner + 1))
+            [ "$_inner" -le 3 ] && printf 'mio: çevrilmeyen dosya: %s\n' "$_f" >&2
+        done
         if [ "$_inner" -gt 0 ]; then
             printf 'mio: paket içinde com.termux kaldı (%s dosya)\n' "$_inner" >&2
             rm -rf "$_work" 2>/dev/null
@@ -1071,7 +1200,7 @@ mio_convert_deb() {
         return 1
     fi
 
-    # 4) yerine koy ve DOĞRULA
+    # 6) yerine koy ve tekrar doğrula
     if cat "$_work/new.deb" > "$_deb" 2>/dev/null &&
        ! "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
         printf 'mio: paket com.mio yollarına çevrildi: %s\n' "$(basename "$_deb")" >&2
@@ -1092,7 +1221,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=7" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=8" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1113,7 +1242,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=7
+MIO_DPKG_WRAPPER_VERSION=8
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1361,7 +1490,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 30 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v7, salt-okunur deb düzeltmesi)\n'
+    printf 'mio sürüm: 31 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v8, tar donusumlu deb cevirici)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
