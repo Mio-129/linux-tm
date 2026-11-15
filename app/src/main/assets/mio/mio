@@ -933,6 +933,51 @@ mio_binary_like() {
     return 1
 }
 
+# ELF içindeki önek yolunu AYNI UZUNLUKTA değiştirir: /data/data/com.termux   (21 bayt)
+#                                                      -> /data/data/com.mio/// (21 bayt)
+# Sondaki fazladan "/" yollar Linux'ta zararsızdır (aynı dosyaya çözülür) ve dosya boyu
+# değişmediği için ELF offset'leri bozulmaz.
+# `sed` yerine bayt düzeyinde çalışır ve sonunda boyutu doğrular: boyut değişirse dosya
+# bozulmuş demektir (offset'ler kayar, dinamik yükleyici "missing DT_HASH" der).
+#   mio_patch_elf <dosya>
+mio_patch_elf() {
+    _pe_f="$1"
+    [ -f "$_pe_f" ] || return 1
+    # ilk 4 bayt: 0x7f 'E' 'L' 'F'
+    case "$(head -c 4 "$_pe_f" 2>/dev/null | tail -c 3)" in
+        ELF) : ;;
+        *) return 1 ;;
+    esac
+    grep -qa 'com\.termux' "$_pe_f" 2>/dev/null || return 0
+
+    # aynı uzunlukta yeni yol (21 bayt)
+    _pe_new="/data/data/com.mio///"
+    [ "$(printf '%s' "$_pe_new" | wc -c | tr -d ' ')" = "21" ] || return 1
+
+    [ -w "$_pe_f" ] || chmod u+w "$_pe_f" 2>/dev/null
+    _pe_before=$(wc -c < "$_pe_f" 2>/dev/null | tr -d ' ')
+    _pe_tmp="$_pe_f.mio-elf"
+    rm -f "$_pe_tmp" 2>/dev/null
+    LC_ALL=C sed -e 's|/data/data/com\.termux|/data/data/com.mio///|g' "$_pe_f" > "$_pe_tmp" 2>/dev/null
+    _pe_after=$(wc -c < "$_pe_tmp" 2>/dev/null | tr -d ' ')
+    if [ -z "$_pe_after" ] || [ "$_pe_before" != "$_pe_after" ]; then
+        rm -f "$_pe_tmp" 2>/dev/null
+        printf 'mio: uyarı: ikili dosya güvenle çevrilemedi (boyut %s -> %s): %s\n' \
+            "$_pe_before" "$_pe_after" "$(basename "$_pe_f")" >&2
+        return 1
+    fi
+    # ELF başlığı hâlâ yerinde mi?
+    if [ "$(head -c 4 "$_pe_tmp" 2>/dev/null | tail -c 3)" != "ELF" ]; then
+        rm -f "$_pe_tmp" 2>/dev/null
+        printf 'mio: uyarı: ikili dosya bozuldu, atlandı: %s\n' "$(basename "$_pe_f")" >&2
+        return 1
+    fi
+    cat "$_pe_tmp" > "$_pe_f" 2>/dev/null
+    rm -f "$_pe_tmp" 2>/dev/null
+    chmod 755 "$_pe_f" 2>/dev/null
+    return 0
+}
+
 # Teşhis: bir .deb neden çevrilemiyor? Hiçbir şeyi değiştirmez.
 #   deb_report <dosya.deb>
 deb_report() {
@@ -1144,9 +1189,11 @@ mio_convert_deb() {
         mio_binary_like "$_f" && continue
         # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan `sed -i` sessizce düşer
         [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
-        if [ "$(head -c 4 "$_f" 2>/dev/null)" = "ELF" ]; then
-            # ELF: yol sabit uzunlukta olmalı, aksi halde ikili bozulur
-            sed -i 's|/data/data/com\.termux|/data/data/com.mio///|g' "$_f" 2>/dev/null
+        # ELF imzası: 0x7f 'E' 'L' 'F' -> head -c 4 çıktısı $'\177ELF'tir, bu yüzden son 3 bayta bakılır
+        if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+            # ELF: değiştirme AYNI UZUNLUKTA olmalı, yoksa dosya boyu değişir ve tüm offset'ler
+            # kayar -> "empty/missing DT_HASH/DT_GNU_HASH" / "unused DT entry" hataları.
+            mio_patch_elf "$_f"
         else
             sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
             sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
@@ -1221,7 +1268,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=8" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=9" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1242,7 +1289,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=8
+MIO_DPKG_WRAPPER_VERSION=9
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1490,7 +1537,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 31 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v8, tar donusumlu deb cevirici)\n'
+    printf 'mio sürüm: 32 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v9, ELF guvenli deb cevirici)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
