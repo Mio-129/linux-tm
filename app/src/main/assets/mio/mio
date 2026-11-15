@@ -1313,19 +1313,16 @@ mio_fix_prefix_perms() {
     done
 
     # 2) share/bin/lib altında yazılamaz kalan dizinler (kurulan paketler 0555 bırakabiliyor)
-    #    Sayaç alt kabukta kaybolmasın diye liste dosyasına yazılıyor.
-    _pplist="/tmp/.mio-ro-dirs-$$"
-    : > "$_pplist" 2>/dev/null
+    #    Alt kabuk (find | while) kullanılmıyor: sayaç orada kayboluyordu. Geçici dosya da
+    #    kullanılmıyor: Android'de /tmp YOK, dosya açılamayınca onarım sessizce hiç çalışmıyordu.
+    #    Bu yüzden iki geçiş: önce say, sonra -exec ile düzelt (POSIX, ara dosyasız).
     for _base in "$_pp/share" "$_pp/bin" "$_pp/lib" "$_pp/libexec" "$_pp/etc"; do
         [ -d "$_base" ] || continue
-        find "$_base" -type d ! -perm -u+w 2>/dev/null >> "$_pplist"
+        _n=$(find "$_base" -type d ! -perm -u+w 2>/dev/null | wc -l)
+        [ "${_n:-0}" -gt 0 ] 2>/dev/null || continue
+        find "$_base" -type d ! -perm -u+w -exec chmod u+rwx {} \; 2>/dev/null
+        _ppn=$((_ppn + _n))
     done
-    if [ -s "$_pplist" ]; then
-        while IFS= read -r _d; do
-            chmod u+rwx "$_d" 2>/dev/null && _ppn=$((_ppn + 1))
-        done < "$_pplist"
-    fi
-    rm -f "$_pplist" 2>/dev/null
 
     MIO_PREFIX_FIXED=$(( ${MIO_PREFIX_FIXED:-0} + _ppn ))
     [ "$_ppn" -gt 0 ] && printf 'mio: önek dizin izinleri düzeltildi (%s dizin)\n' "$_ppn" >&2
@@ -1803,7 +1800,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 36 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
+    printf 'mio sürüm: 37 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
