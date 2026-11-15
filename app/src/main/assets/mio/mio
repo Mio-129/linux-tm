@@ -1275,6 +1275,87 @@ mio_convert_deb() {
     return 1
 }
 
+# dpkg veritabanını (var/lib/dpkg) onarır.
+#
+# `apt install` sırasında sık görülen iki bozulma:
+#   "dpkg: unrecoverable fatal error, aborting:
+#    files list file for package 'sed' is missing final newline"
+#   "dpkg: error: failed to open package info file ... for reading: No such file or directory"
+# Bunlar genelde yarıda kalan bir kurulumdan (ya da paket listesinin eksik yazılmasından) kalır.
+# - `info/*.list`: sonu \n ile bitmeli; eksikse yeni satır eklenir
+# - `status` içinde "install ok installed" görünen ama `info/*.list` dosyası olmayan paketler
+#   "half-installed" durumuna alınır (dpkg bunları sonra --configure ile toparlayabilir)
+# - updates/ kilit dosyası gibi artıklar temizlenir
+#   mio_repair_dpkg_db
+mio_repair_dpkg_db() {
+    _db="${PREFIX:-/data/data/com.mio/files/usr}/var/lib/dpkg"
+    [ -d "$_db/info" ] || return 0
+    _fixed=0
+
+    # 1) sonu newline ile bitmeyen .list dosyaları
+    for _l in "$_db/info"/*.list; do
+        [ -f "$_l" ] || continue
+        [ -s "$_l" ] || continue
+        if [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ]; then
+            printf '\n' >> "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
+        fi
+    done
+    # aynı sorun .md5sums/.conffiles için de dpkg'yi kırar
+    for _l in "$_db/info"/*.md5sums "$_db/info"/*.conffiles "$_db/info"/*.triggers; do
+        [ -f "$_l" ] || continue
+        [ -s "$_l" ] || continue
+        if [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ]; then
+            printf '\n' >> "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
+        fi
+    done
+
+    # 2) status içinde "install ok installed" görünen ama `info/<paket>.list` dosyası olmayan
+    #    paketleri "half-installed" yap. Dosyanın TAMAMINI yeniden yazmak riskli (alan sırası
+    #    bozulur), bu yüzden yalnız ilgili `Status:` satırı değiştirilir.
+    if [ -f "$_db/status" ]; then
+        _missing=""
+        _cur=""
+        while IFS= read -r _line; do
+            case "$_line" in
+                "Package: "*)
+                    _cur=${_line#Package: }
+                    ;;
+                "Status: install ok installed")
+                    if [ -n "$_cur" ] && [ ! -f "$_db/info/$_cur.list" ]; then
+                        _missing="$_missing $_cur"
+                    fi
+                    ;;
+            esac
+        done < "$_db/status"
+        for _p in $_missing; do
+            _tmp="$_db/status.mio-tmp"
+            awk -v pkg="$_p" '
+                /^Package: / { cur = substr($0, 10) }
+                /^Status: install ok installed$/ && cur == pkg {
+                    print "Status: install ok half-installed"
+                    next
+                }
+                { print }
+            ' "$_db/status" > "$_tmp" 2>/dev/null
+            if [ -s "$_tmp" ]; then
+                mv "$_tmp" "$_db/status" 2>/dev/null && _fixed=$((_fixed + 1))
+            else
+                rm -f "$_tmp" 2>/dev/null
+            fi
+        done
+    fi
+
+    # 3) yarıda kalmış kurulum artıkları
+    rm -f "$_db/updates/"* 2>/dev/null
+    for _l in "$_db/info"/*.dpkg-new "$_db/info"/*.dpkg-tmp; do
+        [ -e "$_l" ] || continue
+        rm -f "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
+    done
+
+    [ "$_fixed" -gt 0 ] && printf 'mio: dpkg veritabanı onarıldı (%s düzeltme)\n' "$_fixed" >&2
+    return 0
+}
+
 # dpkg sarmalayıcısı: dpkg'ye verilen her .deb dosyasını `mio_convert_deb` ile çevirir ve
 # ``yolları düzelterek gerçek dpkg'yi çağırır.
 install_dpkg_wrapper() {
@@ -1284,7 +1365,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=10" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=11" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1305,7 +1386,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=10
+MIO_DPKG_WRAPPER_VERSION=11
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1447,6 +1528,7 @@ MIO_EOF
 }
 
 install_apt_wrappers() {
+    mio_repair_dpkg_db
     install_apt_wrapper pkg
     install_apt_wrapper apt
     install_apt_wrapper apt-get
@@ -1637,7 +1719,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 33 (menü, ses, paketler, istek dosyası, güvenli depo, apt sarmalayıcı v27, dpkg sarmalayıcı v9, dpkg-deb kancası, ELF guvenli deb cevirici)\n'
+    printf 'mio sürüm: 34 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı onarımı, kalıcı duvar kağıdı/ses)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2331,6 +2413,24 @@ case "$COMMAND" in
         fi
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
+        # dpkg veritabanı: yarıda kalan kurulumdan kalan bozukluklar (newline, eksik .list)
+        printf 'dpkg veritabanı: '
+        if [ -f "$PREFIX/var/lib/dpkg/status" ]; then
+            _bad=0
+            for _l in "$PREFIX/var/lib/dpkg/info"/*.list; do
+                [ -f "$_l" ] && [ -s "$_l" ] || continue
+                [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ] && _bad=$((_bad + 1))
+            done
+            if [ "$_bad" -gt 0 ]; then
+                printf 'onarıldı (%s dosyada eksik newline)\n' "$_bad"
+                mio_repair_dpkg_db
+            else
+                printf 'sağlam\n'
+            fi
+        else
+            printf 'status dosyası yok\n'
+        fi
+
         printf '\n=== test ===\n'
         printf 'dpkg: '
         if [ ! -x "$PREFIX/bin/dpkg" ]; then

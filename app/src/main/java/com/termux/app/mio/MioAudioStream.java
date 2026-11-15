@@ -34,6 +34,10 @@ public final class MioAudioStream {
 
     public static final String LOG_TAG = "MioAudioStream";
 
+    /** The shared preferences are shared with {@link MioCommandManager}. */
+    private static final String PREFERENCES_NAME = "mio";
+    private static final String PREFERENCE_KEY_LATCHED = "audio_latched";
+
     /** The volume step of `so ses +` and `so ses -`, as a fraction of the max volume. */
     private static final int VOLUME_STEP = 1;
 
@@ -62,6 +66,28 @@ public final class MioAudioStream {
     private MioAudioStream(@NonNull Application application) {
         mApplication = application;
         mAudioManager = (AudioManager) application.getSystemService(Context.AUDIO_SERVICE);
+        // The latched state has to survive the app being closed: it is what makes the audio of the
+        // background video stay on in a new session without running `so` again.
+        mLatched = readLatched();
+    }
+
+    private boolean readLatched() {
+        try {
+            return mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREFERENCE_KEY_LATCHED, false);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the stored audio state", e);
+            return false;
+        }
+    }
+
+    private void storeLatched(boolean latched) {
+        try {
+            mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(PREFERENCE_KEY_LATCHED, latched).apply();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to store the audio state", e);
+        }
     }
 
     public static synchronized MioAudioStream getInstance(@NonNull Context context) {
@@ -82,6 +108,7 @@ public final class MioAudioStream {
      */
     public void setLatched(final boolean enabled) {
         mLatched = enabled;
+        storeLatched(enabled);
         mLastProblem = null;
         mMainHandler.post(() -> {
             MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();

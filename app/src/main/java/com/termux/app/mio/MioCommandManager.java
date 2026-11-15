@@ -138,10 +138,77 @@ public final class MioCommandManager {
 
     private static final String PREFERENCES_NAME = "mio";
     private static final String PREFERENCE_KEY_ANIMATION = "animation_mode";
+    /** The background media path, so that it is applied again after the app was closed. */
+    private static final String PREFERENCE_KEY_MEDIA_PATH = "media_path";
+    /** If the audio of the stored background media was enabled. */
+    private static final String PREFERENCE_KEY_MEDIA_AUDIO = "media_audio";
 
     private MioCommandManager(@NonNull Application application) {
         mApplication = application;
         mLastAnimationMode = readStoredAnimationMode();
+        // Kullanıcı bir duvar kağıdı ayarladığında uygulama kapansa da korunmalı: yeni oturumda
+        // `swset` tekrar yazılmadan gelsin.
+        mLastMediaFile = readStoredMediaFile();
+        mLastPlayAudio = readStoredMediaAudio();
+    }
+
+    /** @return Returns the stored background media file, or {@code null} if none is stored. */
+    @Nullable
+    private File readStoredMediaFile() {
+        try {
+            String path = mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getString(PREFERENCE_KEY_MEDIA_PATH, null);
+            if (isNullOrEmpty(path)) return null;
+            File file = new File(path);
+            // Dosya silinmiş olabilir: o zaman kaydı temizle
+            if (!file.isFile()) {
+                clearStoredMedia();
+                return null;
+            }
+            return file;
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the stored media file", e);
+            return null;
+        }
+    }
+
+    private boolean readStoredMediaAudio() {
+        try {
+            return mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREFERENCE_KEY_MEDIA_AUDIO, false);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read the stored media audio state", e);
+            return false;
+        }
+    }
+
+    /** Store the background media, so that it is applied again on the next app start. */
+    private void storeMedia(@Nullable File file, boolean playAudio) {
+        try {
+            if (file == null) {
+                clearStoredMedia();
+                return;
+            }
+            mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREFERENCE_KEY_MEDIA_PATH, file.getAbsolutePath())
+                .putBoolean(PREFERENCE_KEY_MEDIA_AUDIO, playAudio)
+                .apply();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to store the media file", e);
+        }
+    }
+
+    private void clearStoredMedia() {
+        try {
+            mApplication.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(PREFERENCE_KEY_MEDIA_PATH)
+                .remove(PREFERENCE_KEY_MEDIA_AUDIO)
+                .apply();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to clear the stored media file", e);
+        }
     }
 
     /** Store the animation mode that was changed outside of this manager, like from the menu. */
@@ -448,9 +515,11 @@ public final class MioCommandManager {
             }
 
             // Remember the media, so that it can be applied when the activity is created if the
-            // activity is not running, like when the command was run from a background session
+            // activity is not running, like when the command was run from a background session.
+            // It is also stored in the preferences, so that a new session keeps the background.
             mLastMediaFile = file;
             mLastPlayAudio = finalPlayAudio;
+            storeMedia(file, finalPlayAudio);
 
             mMainHandler.post(() -> applyMediaFile(file, finalPlayAudio));
         });
@@ -477,6 +546,12 @@ public final class MioCommandManager {
             if (file == null || backgroundView.hasMedia()) return;
             Logger.logInfo(LOG_TAG, "Restoring background media \"" + file.getAbsolutePath() + "\"");
             applyMediaFile(file, playAudio, false);
+            // Yeni oturumda ses de geri gelsin: kullanıcı `so` ile sesi açtıysa (latched) video
+            // yeniden yüklendiğinde sesi uygula. `setVideo` sesi kapatabildiği için burada
+            // açıkça istenir.
+            if (playAudio || MioAudioStream.getInstance(mApplication).isLatched()) {
+                backgroundView.setAudioEnabled(true);
+            }
         });
     }
 
@@ -497,6 +572,7 @@ public final class MioCommandManager {
     private void applyMediaFile(@NonNull File file, boolean playAudio, boolean showToastIfFailed) {
         mLastMediaFile = file;
         mLastPlayAudio = playAudio;
+        storeMedia(file, playAudio);
 
         MioMediaBackgroundView backgroundView = MioMediaBackgroundView.getInstance();
         if (backgroundView == null) {
@@ -563,11 +639,15 @@ public final class MioCommandManager {
                 }
 
                 if (MODE_OFF.equals(finalMode)) {
-                    mLastPlayAudio = false;
                     backgroundView.setAudioEnabled(false);
+                    mLastPlayAudio = false;
+                    if (mLastMediaFile != null) storeMedia(mLastMediaFile, false);
                     showToast("so: ses kapatıldı.");
                 } else if (MODE_STOP.equals(finalMode)) {
                     backgroundView.clearMedia();
+                    mLastMediaFile = null;
+                    mLastPlayAudio = false;
+                    clearStoredMedia();
                     showToast("so: ses ve arka plan durduruldu.");
                 } else {
                     if (!backgroundView.isVideo()) {
@@ -576,6 +656,8 @@ public final class MioCommandManager {
                     }
                     if (backgroundView.setAudioEnabled(true)) {
                         mLastPlayAudio = true;
+                        // Sesi de kaydet: yeni oturumda `so` yazmadan ses gelsin
+                        if (mLastMediaFile != null) storeMedia(mLastMediaFile, true);
                         showToast("so: ses açıldı: " + (backgroundView.getMediaFile() != null ? backgroundView.getMediaFile().getName() : ""));
                     } else {
                         showToast("so: ses açılamadı.");
@@ -588,6 +670,7 @@ public final class MioCommandManager {
     /** Clear the background media so that the default black background is shown again. */
     public void clearWallpaper() {
         mLastMediaFile = null;
+        clearStoredMedia();
         mLastPlayAudio = false;
 
         mMainHandler.post(() -> {
