@@ -401,7 +401,19 @@ final class TermuxInstaller {
         }
         if (content == null || indexOf(content, legacy, 0) < 0) return;
 
-        byte[] patched = replaceInsideNullTerminatedStrings(content, legacy, current);
+        // Salt metin dosyalarında (ör. dpkg *.list, betikler, yapılandırma) NUL dolgusu
+        // dosyanın sonuna \0 baytları eklediği için dpkg "missing final newline" hatası verir.
+        // Yalnız NUL baytı içeren ikili (ELF vb.) dosyalarda sabit uzunluklu değişim yapılır.
+        boolean hasNul = false;
+        for (byte b : content) {
+            if (b == 0) {
+                hasNul = true;
+                break;
+            }
+        }
+        byte[] patched = hasNul
+            ? replaceInsideNullTerminatedStrings(content, legacy, current)
+            : replaceAll(content, legacy, current);
         if (patched == null) return;
 
         boolean executable = file.canExecute();

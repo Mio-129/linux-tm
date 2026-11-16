@@ -1374,22 +1374,41 @@ mio_repair_dpkg_db() {
     [ -f "$_db/status" ] || : > "$_db/status" 2>/dev/null
     [ -d "$_db/info" ] || return 0
 
-    # 1) sonu newline ile bitmeyen .list dosyaları
-    for _l in "$_db/info"/*.list; do
+    # 1) sonu newline ile bitmeyen, 0 baytlı veya \0 dolgulu .list / kontrol dosyaları.
+    #    NOT: `[ -n "$(tail -c 1)" ]` \0 baytını kabukta yuttuğu için `\0` biten dosyaları
+    #    kaçırıyordu; `tr '\000\n' 'ZN'` ile son baytın tam olarak `\n` (`N`) olduğu sınanır.
+    _nul_pass=0
+    [ -f "$_db/.mio-lists-nul-cleaned" ] || _nul_pass=1
+    for _l in "$_db/info"/*.list "$_db/info"/*.md5sums "$_db/info"/*.conffiles "$_db/info"/*.triggers; do
         [ -f "$_l" ] || continue
-        [ -s "$_l" ] || continue
-        if [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ]; then
-            printf '\n' >> "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
+        _is_list=0
+        case "$_l" in *.list) _is_list=1 ;; esac
+        if [ "$_is_list" -eq 0 ] && [ ! -s "$_l" ]; then
+            continue
+        fi
+        _last=$(tail -c 1 "$_l" 2>/dev/null | tr '\000\n' 'ZN')
+        if [ "$_last" != "N" ] || [ "$_nul_pass" -eq 1 ]; then
+            _ltmp="$_l.mio-tmp"
+            tr -d '\000' < "$_l" > "$_ltmp" 2>/dev/null || { rm -f "$_ltmp" 2>/dev/null; continue; }
+            if [ ! -s "$_ltmp" ]; then
+                if [ "$_is_list" -eq 1 ]; then
+                    printf '/.\n' > "$_ltmp" 2>/dev/null
+                else
+                    rm -f "$_ltmp" 2>/dev/null
+                    continue
+                fi
+            else
+                _last2=$(tail -c 1 "$_ltmp" 2>/dev/null | tr '\000\n' 'ZN')
+                [ "$_last2" = "N" ] || printf '\n' >> "$_ltmp" 2>/dev/null
+            fi
+            if ! cmp -s "$_l" "$_ltmp" 2>/dev/null; then
+                mv "$_ltmp" "$_l" 2>/dev/null && chmod 644 "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
+            else
+                rm -f "$_ltmp" 2>/dev/null
+            fi
         fi
     done
-    # aynı sorun .md5sums/.conffiles için de dpkg'yi kırar
-    for _l in "$_db/info"/*.md5sums "$_db/info"/*.conffiles "$_db/info"/*.triggers; do
-        [ -f "$_l" ] || continue
-        [ -s "$_l" ] || continue
-        if [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ]; then
-            printf '\n' >> "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
-        fi
-    done
+    [ "$_nul_pass" -eq 1 ] && : > "$_db/.mio-lists-nul-cleaned" 2>/dev/null
 
     # 2) status içinde "install ok installed" görünen ama `info/<paket>.list` dosyası olmayan
     #    paketleri "half-installed" yap. Dosyanın TAMAMINI yeniden yazmak riskli (alan sırası
@@ -2731,29 +2750,35 @@ case "$COMMAND" in
         fi
 
         # 4b) dpkg dosya listeleri: "files list file ... is missing final newline"
-        #     hatası kurulumu tamamen durdurur; sonu satır sonuyla bitmeyen
-        #     *.list dosyalarına satır sonu ekle
+        #     hatası kurulumu tamamen durdurur; \0 dolgusu temizlenir ve sonu
+        #     satır sonuyla bitmeyen *.list dosyalarına satır sonu eklenir
         if [ -d "$PREFIX/var/lib/dpkg/info" ]; then
             fixed_lists=0
             for lf in "$PREFIX"/var/lib/dpkg/info/*.list; do
                 [ -f "$lf" ] || continue
-                if [ -s "$lf" ]; then
-                    lastc=$(tail -c 1 "$lf" 2>/dev/null | od -An -tx1 | tr -d ' \n')
-                    [ "$lastc" = "0a" ] && continue
-                    # son satır tam bir yol ise sadece satır sonu ekle,
-                    # kesikse (yarım yol) o satırı at
-                    lastline=$(tail -n 1 "$lf" 2>/dev/null)
-                    case "$lastline" in
-                        /*) printf '\n' >> "$lf" 2>/dev/null ;;
-                        *)  awk 'NR > 1 { print prev } { prev = $0 } END { if (NR > 1) print prev }' \
-                                "$lf" > "$lf.mio-tmp" 2>/dev/null &&
-                                mv "$lf.mio-tmp" "$lf" 2>/dev/null
-                            [ -s "$lf" ] && tail -c 1 "$lf" | od -An -tx1 | grep -q 0a || printf '\n' >> "$lf" 2>/dev/null ;;
-                    esac
-                    [ -s "$lf" ] || printf '/.\n' > "$lf" 2>/dev/null
-                    fixed_lists=$((fixed_lists + 1))
+                tr -d '\000' < "$lf" > "$lf.mio-tmp" 2>/dev/null || continue
+                if [ -s "$lf.mio-tmp" ]; then
+                    lastc=$(tail -c 1 "$lf.mio-tmp" 2>/dev/null | tr '\000\n' 'ZN')
+                    if [ "$lastc" != "N" ]; then
+                        lastline=$(tail -n 1 "$lf.mio-tmp" 2>/dev/null)
+                        case "$lastline" in
+                            /*) printf '\n' >> "$lf.mio-tmp" 2>/dev/null ;;
+                            *)  awk 'NR > 1 { print prev } { prev = $0 } END { if (NR > 1) print prev }' \
+                                    "$lf.mio-tmp" > "$lf.mio-tmp2" 2>/dev/null &&
+                                    mv "$lf.mio-tmp2" "$lf.mio-tmp" 2>/dev/null
+                                [ -s "$lf.mio-tmp" ] && [ "$(tail -c 1 "$lf.mio-tmp" 2>/dev/null | tr '\000\n' 'ZN')" = "N" ] ||
+                                    printf '\n' >> "$lf.mio-tmp" 2>/dev/null ;;
+                        esac
+                    fi
+                    [ -s "$lf.mio-tmp" ] || printf '/.\n' > "$lf.mio-tmp" 2>/dev/null
                 else
-                    printf '/.\n' >> "$lf" 2>/dev/null && fixed_lists=$((fixed_lists + 1))
+                    printf '/.\n' > "$lf.mio-tmp" 2>/dev/null
+                fi
+                if ! cmp -s "$lf" "$lf.mio-tmp" 2>/dev/null; then
+                    mv "$lf.mio-tmp" "$lf" 2>/dev/null && chmod 644 "$lf" 2>/dev/null &&
+                        fixed_lists=$((fixed_lists + 1))
+                else
+                    rm -f "$lf.mio-tmp" 2>/dev/null
                 fi
             done
             [ "$fixed_lists" -gt 0 ] && printf '  dpkg dosya listeleri onarıldı: %s\n' "$fixed_lists" \
@@ -2812,8 +2837,8 @@ case "$COMMAND" in
                 fi
             done
             for _l in "$PREFIX/var/lib/dpkg/info"/*.list; do
-                [ -f "$_l" ] && [ -s "$_l" ] || continue
-                [ -n "$(tail -c 1 "$_l" 2>/dev/null)" ] && _bad=$((_bad + 1))
+                [ -f "$_l" ] || continue
+                [ "$(tail -c 1 "$_l" 2>/dev/null | tr '\000\n' 'ZN')" = "N" ] || _bad=$((_bad + 1))
             done
             if [ "$_bad" -gt 0 ]; then
                 printf 'onarıldı:%s\n' "$_dbdirs"

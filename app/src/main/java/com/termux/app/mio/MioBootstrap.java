@@ -423,16 +423,67 @@ public final class MioBootstrap {
 
         boolean repaired = false;
         for (File file : files) {
-            if (!file.isFile() || !file.getName().endsWith(".list")) continue;
-            String content = readText(file);
-            if (content == null) continue;
-            if (content.isEmpty()) {
-                if (writeText(file, "/.\n")) repaired = true;
-            } else if (!content.endsWith("\n")) {
-                if (writeText(file, content + "\n")) repaired = true;
+            if (!file.isFile()) continue;
+            String name = file.getName();
+            boolean isList = name.endsWith(".list");
+            if (!isList && !name.endsWith(".md5sums") && !name.endsWith(".conffiles") && !name.endsWith(".triggers")) {
+                continue;
+            }
+            byte[] raw = readAllBytesQuiet(file);
+            if (raw == null) continue;
+
+            // `TermuxInstaller` eski sürümlerde metin dosyalarının sonuna NUL (\0) baytı
+            // eklemişti; ayrıca satır sonu eksik ya da 0 baytlı .list dosyaları da dpkg'yi
+            // "files list file for package ... is missing final newline" ile durduruyor.
+            java.io.ByteArrayOutputStream clean = new java.io.ByteArrayOutputStream(raw.length + 4);
+            for (byte b : raw) {
+                if (b != 0) clean.write(b);
+            }
+            byte[] cleaned = clean.toByteArray();
+            if (cleaned.length == 0) {
+                if (isList) {
+                    cleaned = new byte[]{'/', '.', '\n'};
+                } else {
+                    if (raw.length == 0) continue;
+                }
+            } else if (cleaned[cleaned.length - 1] != '\n') {
+                clean.write('\n');
+                cleaned = clean.toByteArray();
+            }
+
+            if (!Arrays.equals(raw, cleaned)) {
+                if (writeBytes(file, cleaned)) repaired = true;
             }
         }
         return repaired;
+    }
+
+    @Nullable
+    private static byte[] readAllBytesQuiet(@NonNull File file) {
+        long size = file.length();
+        if (size > 8L * 1024 * 1024) return null;
+        byte[] buffer = new byte[(int) size];
+        int offset = 0;
+        try (InputStream in = new FileInputStream(file)) {
+            int read;
+            while (offset < buffer.length && (read = in.read(buffer, offset, buffer.length - offset)) > 0) {
+                offset += read;
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        if (offset == buffer.length) return buffer;
+        return Arrays.copyOf(buffer, offset);
+    }
+
+    private static boolean writeBytes(@NonNull File file, @NonNull byte[] bytes) {
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(bytes);
+            return true;
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to write \"" + file.getAbsolutePath() + "\"", e);
+            return false;
+        }
     }
 
     /**
