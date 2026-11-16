@@ -1438,7 +1438,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=12" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=13" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1459,7 +1459,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=12
+MIO_DPKG_WRAPPER_VERSION=13
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1510,12 +1510,20 @@ if [ "$failed" -ne 0 ]; then
     exit 1
 fi
 
-# Sürüm 12: `apt install` bu sarmalayıcıdan geçer, `mio` betiğinden geçmez. Paket kurulumu
+# Sürüm 13: `apt install` bu sarmalayıcıdan geçer, `mio` betiğinden geçmez. Paket kurulumu
 # 0555 kalmış bir $PREFIX/share dizininde "unable to create ...dpkg-new: Permission denied"
 # ile düşüyordu; dpkg çağrılmadan önce izinleri onar.
 if [ -x "$mio" ]; then
     MIO_WRAPPER_QUIET=1 "$mio" sarmalayici >/dev/null 2>&1 || :
 fi
+# Onarım yine de yetmezse (çok iç içe 0555 dizin) son bir kez doğrudan dene. POSIX, ara
+# dosyasız: iki geçişli find. Hata olsa bile dpkg'yi durdurma, kendi hatasını göstersin.
+for _base in "$prefix/share" "$prefix/bin" "$prefix/lib" "$prefix/etc"; do
+    [ -d "$_base" ] || continue
+    if [ "$(find "$_base" -type d ! -perm -u+w 2>/dev/null | wc -l)" -gt 0 ] 2>/dev/null; then
+        find "$_base" -type d ! -perm -u+w -exec chmod u+rwx {} \; 2>/dev/null || :
+    fi
+done
 
 exec "$real" "$@"
 MIO_EOF
@@ -1800,7 +1808,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 37 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
+    printf 'mio sürüm: 38 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2612,6 +2620,9 @@ case "$COMMAND" in
         probe_ran=0
         probe_stage="hazırlık"
         PATH="$PREFIX/bin:$PATH" ; export PATH
+        # TMPDIR bozuksa dpkg-deb/tar geçici dosya açamaz ve prova yanlışlıkla ATLANDI der.
+        mkdir -p "$PREFIX/tmp" 2>/dev/null
+        TMPDIR="$PREFIX/tmp" ; export TMPDIR
         # Önceki provadan kalan salt-okunur ağaç silinemeyebilir: önce izin ver, sonra sil
         chmod -R u+rwX "$probe_dir" 2>/dev/null
         rm -rf "$probe_dir" "$probe_marker" 2>/dev/null
@@ -2621,12 +2632,15 @@ case "$COMMAND" in
         printf 'Package: mio-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: mio <mio@local>\nDescription: mio install probe\n' \
             > "$probe_dir/root/DEBIAN/control" 2>/dev/null
         printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
-        # Salt-okunur dosyalar: `dpkg-deb -R` paketlenen izinleri geri verir ve eski ağacın
-        # silinmesi bu yüzden başarısız olabiliyordu. Prova bunu da kapsasın.
-        # Dizin izni de sınansın: paketler dizinleri 0555 ile taşıyabiliyor ve dpkg o zaman
-        # "unable to create ...dpkg-new: Permission denied" veriyor.
-        chmod -R a-w "$probe_dir/root/data/data/com.termux" 2>/dev/null
-        chmod 555 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name" 2>/dev/null
+        # DİKKAT: hedef dizin 0555 YAPILMAZ. dpkg dosyayı önce '<ad>.dpkg-new' olarak yazar;
+        # hedef dizin yazılamazsa dpkg kendi kurulumunu yapamaz ve prova her zaman
+        # "unable to create ...probe.dpkg-new: Permission denied" verirdi. Bu imkansız bir
+        # senaryoydu: gerçek paketler de dizinleri yazılabilir bırakır.
+        # Burada yalnız DOSYANIN salt-okunur olması sınanır (eski ağacın silinmesi için);
+        # dizin 0755 kalır.
+        chmod 644 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
+        chmod 444 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
+        chmod 755 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name" 2>/dev/null
         : > "$probe_admin/status"
         : > "$probe_admin/available"
 
