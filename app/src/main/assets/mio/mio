@@ -1343,7 +1343,40 @@ mio_repair_dpkg_db() {
     [ -d "$_db" ] || return 0
     _fixed=0
 
-    # 0) dpkg'nin ÇALIŞMA DİZİNLERİ. Eksik ya da yazılamaz olduğunda dpkg şu hatayı verir:
+    # 0a) dpkg şu an çalışıyorsa veritabanına ASLA dokunma!
+    #     dpkg çalışma süresince updates/tmp.i dosyasını açık tutar ve bitirirken
+    #     rename("updates/tmp.i", "updates/0000") yapar; o dosya silinirse dpkg
+    #     "unable to install updated status of '<paket>': No such file or directory" ile çöker.
+    if [ -n "${MIO_DPKG_RUNNING:-}" ]; then
+        return 0
+    fi
+    for _pc in /proc/[0-9]*/cmdline; do
+        [ -r "$_pc" ] || continue
+        if tr '\000' ' ' < "$_pc" 2>/dev/null | grep -q 'dpkg\.mio-real'; then
+            return 0
+        fi
+    done
+
+    # 0b) İki mio_repair_dpkg_db çağrısı (ör. açılış arka planı + terminal komutu) aynı anda
+    #     çakışıp *.mio-tmp artığı bırakmasın diye basit mkdir kilidi al.
+    _lock="$_db/.mio-repair.lock"
+    _got_lock=0
+    if mkdir "$_lock" 2>/dev/null; then
+        printf '%s\n' "$$" > "$_lock/pid" 2>/dev/null
+        _got_lock=1
+    elif [ -f "$_lock/pid" ]; then
+        _lpid=$(cat "$_lock/pid" 2>/dev/null || true)
+        if [ -n "$_lpid" ] && ! kill -0 "$_lpid" 2>/dev/null; then
+            rm -rf "$_lock" 2>/dev/null
+            if mkdir "$_lock" 2>/dev/null; then
+                printf '%s\n' "$$" > "$_lock/pid" 2>/dev/null
+                _got_lock=1
+            fi
+        fi
+    fi
+    [ "$_got_lock" -eq 1 ] || return 0
+
+    # 0c) dpkg'nin ÇALIŞMA DİZİNLERİ. Eksik ya da yazılamaz olduğunda dpkg şu hatayı verir:
     #      dpkg: unrecoverable fatal error, aborting:
     #       unable to install updated status of '<paket>': No such file or directory
     #    (status güncellemesi geçici olarak updates/ altına yazılır). Bu yüzden her çalıştırmada
@@ -1369,46 +1402,64 @@ mio_repair_dpkg_db() {
         rm -rf "${PREFIX:-/data/data/com.mio/files/usr}/var/log/dpkg.log" 2>/dev/null
         _fixed=$((_fixed + 1))
     fi
-    # updates/ içinde yarıda kalmış durum dosyaları dpkg'yi kilitler
+    # updates/ içinde yarıda kalmış durum dosyaları dpkg'yi kilitler (dpkg çalışmıyorken temizle)
     rm -f "$_db"/updates/[0-9]* "$_db"/updates/tmp.* 2>/dev/null
     [ -f "$_db/status" ] || : > "$_db/status" 2>/dev/null
-    [ -d "$_db/info" ] || return 0
+    if [ ! -d "$_db/info" ]; then
+        rm -rf "$_lock" 2>/dev/null
+        return 0
+    fi
+
+    # Önceki kesintilerden (Ctrl+C vb.) kalan *.mio-tmp* artıklarını temizle
+    for _lt in "$_db/info"/*.mio-tmp*; do
+        [ -e "$_lt" ] || continue
+        rm -f "$_lt" 2>/dev/null && _fixed=$((_fixed + 1))
+    done
 
     # 1) sonu newline ile bitmeyen, 0 baytlı veya \0 dolgulu .list / kontrol dosyaları.
     #    NOT: `[ -n "$(tail -c 1)" ]` \0 baytını kabukta yuttuğu için `\0` biten dosyaları
     #    kaçırıyordu; `tr '\000\n' 'ZN'` ile son baytın tam olarak `\n` (`N`) olduğu sınanır.
+    #    MioBootstrap Java tarafında zaten temizleyip `.mio-lists-nul-cleaned` yazar; yalnızca
+    #    işaret yoksa, info/ dizini işaretten yeniyse ya da zorlanırsa (apt-fix) tara.
     _nul_pass=0
     [ -f "$_db/.mio-lists-nul-cleaned" ] || _nul_pass=1
-    for _l in "$_db/info"/*.list "$_db/info"/*.md5sums "$_db/info"/*.conffiles "$_db/info"/*.triggers; do
-        [ -f "$_l" ] || continue
-        _is_list=0
-        case "$_l" in *.list) _is_list=1 ;; esac
-        if [ "$_is_list" -eq 0 ] && [ ! -s "$_l" ]; then
-            continue
-        fi
-        _last=$(tail -c 1 "$_l" 2>/dev/null | tr '\000\n' 'ZN')
-        if [ "$_last" != "N" ] || [ "$_nul_pass" -eq 1 ]; then
-            _ltmp="$_l.mio-tmp"
-            tr -d '\000' < "$_l" > "$_ltmp" 2>/dev/null || { rm -f "$_ltmp" 2>/dev/null; continue; }
-            if [ ! -s "$_ltmp" ]; then
-                if [ "$_is_list" -eq 1 ]; then
-                    printf '/.\n' > "$_ltmp" 2>/dev/null
+    _scan_lists=0
+    if [ "$_nul_pass" -eq 1 ] || [ "${MIO_FORCE_DB_REPAIR:-0}" = "1" ] || \
+       [ "$_db/info" -nt "$_db/.mio-lists-nul-cleaned" ]; then
+        _scan_lists=1
+    fi
+    if [ "$_scan_lists" -eq 1 ]; then
+        for _l in "$_db/info"/*.list "$_db/info"/*.md5sums "$_db/info"/*.conffiles "$_db/info"/*.triggers; do
+            [ -f "$_l" ] || continue
+            _is_list=0
+            case "$_l" in *.list) _is_list=1 ;; esac
+            if [ "$_is_list" -eq 0 ] && [ ! -s "$_l" ]; then
+                continue
+            fi
+            _last=$(tail -c 1 "$_l" 2>/dev/null | tr '\000\n' 'ZN')
+            if [ "$_last" != "N" ] || [ "$_nul_pass" -eq 1 ]; then
+                _ltmp="$_l.mio-tmp.$$"
+                tr -d '\000' < "$_l" > "$_ltmp" 2>/dev/null || { rm -f "$_ltmp" 2>/dev/null; continue; }
+                if [ ! -s "$_ltmp" ]; then
+                    if [ "$_is_list" -eq 1 ]; then
+                        printf '/.\n' > "$_ltmp" 2>/dev/null
+                    else
+                        rm -f "$_ltmp" 2>/dev/null
+                        continue
+                    fi
+                else
+                    _last2=$(tail -c 1 "$_ltmp" 2>/dev/null | tr '\000\n' 'ZN')
+                    [ "$_last2" = "N" ] || printf '\n' >> "$_ltmp" 2>/dev/null
+                fi
+                if ! cmp -s "$_l" "$_ltmp" 2>/dev/null; then
+                    mv "$_ltmp" "$_l" 2>/dev/null && chmod 644 "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
                 else
                     rm -f "$_ltmp" 2>/dev/null
-                    continue
                 fi
-            else
-                _last2=$(tail -c 1 "$_ltmp" 2>/dev/null | tr '\000\n' 'ZN')
-                [ "$_last2" = "N" ] || printf '\n' >> "$_ltmp" 2>/dev/null
             fi
-            if ! cmp -s "$_l" "$_ltmp" 2>/dev/null; then
-                mv "$_ltmp" "$_l" 2>/dev/null && chmod 644 "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
-            else
-                rm -f "$_ltmp" 2>/dev/null
-            fi
-        fi
-    done
-    [ "$_nul_pass" -eq 1 ] && : > "$_db/.mio-lists-nul-cleaned" 2>/dev/null
+        done
+        : > "$_db/.mio-lists-nul-cleaned" 2>/dev/null
+    fi
 
     # 2) status içinde "install ok installed" görünen ama `info/<paket>.list` dosyası olmayan
     #    paketleri "half-installed" yap. Dosyanın TAMAMINI yeniden yazmak riskli (alan sırası
@@ -1453,6 +1504,7 @@ mio_repair_dpkg_db() {
         rm -f "$_l" 2>/dev/null && _fixed=$((_fixed + 1))
     done
 
+    rm -rf "$_lock" 2>/dev/null
     [ "$_fixed" -gt 0 ] && printf 'mio: dpkg veritabanı onarıldı (%s düzeltme)\n' "$_fixed" >&2
     return 0
 }
@@ -1466,7 +1518,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=13" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=14" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1487,7 +1539,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=13
+MIO_DPKG_WRAPPER_VERSION=14
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1553,6 +1605,7 @@ for _base in "$prefix/share" "$prefix/bin" "$prefix/lib" "$prefix/etc"; do
     fi
 done
 
+export MIO_DPKG_RUNNING=1
 exec "$real" "$@"
 MIO_EOF
     sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
@@ -2042,7 +2095,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 39 (menü, ses, paketler, mio apt/pkg/install, prova 0644 onarımı, güvenli depo, dpkg-deb kancası)\n'
+    printf 'mio sürüm: 40 (menü, ses, paketler, mio apt/pkg/install, dpkg updates kilidi, güvenli depo, dpkg-deb kancası)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2489,14 +2542,27 @@ for _pd in "$PREFIX/share" "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/etc" "$PREFIX/va
 done
 export MIO_PREFIX_RO
 
-# Her komuttan önce depo dosyasını doğrula/onar: bozuksa pkg ve apt hiç çalışmaz
-if [ -d "${PREFIX:-}/etc/apt" ]; then
-    fix_sources >/dev/null 2>&1
-fi
+# Her komuttan önce depo dosyasını doğrula/onar: bozuksa pkg ve apt hiç çalışmaz.
+# Ancak deb-cevir (dpkg-deb içinden çalışır), yardım ve sürüm komutlarında atla:
+# özellikle dpkg çalışırken mio_repair_dpkg_db tetiklenirse updates/tmp.i silinir.
+case "$COMMAND" in
+    -h|--help|help|yardim|yardım|-v|--version|version|surum|sürüm|deb-cevir|debcevir|convert-deb)
+        : ;;
+    *)
+        if [ "${MIO_DEB_CONVERTING:-0}" != "1" ] && [ "${MIO_DPKG_RUNNING:-0}" != "1" ] && [ -d "${PREFIX:-}/etc/apt" ]; then
+            fix_sources >/dev/null 2>&1
+        fi
+        ;;
+esac
 
 case "$COMMAND" in
     -h|--help|help|yardim|yardım)
         usage
+        exit 0
+        ;;
+    -v|--version|version|surum|sürüm)
+        app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
+        printf 'mio sürüm: 40 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     gui|panel|pencere)
@@ -2754,33 +2820,38 @@ case "$COMMAND" in
         #     satır sonuyla bitmeyen *.list dosyalarına satır sonu eklenir
         if [ -d "$PREFIX/var/lib/dpkg/info" ]; then
             fixed_lists=0
+            for _lt in "$PREFIX"/var/lib/dpkg/info/*.mio-tmp*; do
+                [ -e "$_lt" ] && rm -f "$_lt" 2>/dev/null && fixed_lists=$((fixed_lists + 1))
+            done
             for lf in "$PREFIX"/var/lib/dpkg/info/*.list; do
                 [ -f "$lf" ] || continue
-                tr -d '\000' < "$lf" > "$lf.mio-tmp" 2>/dev/null || continue
-                if [ -s "$lf.mio-tmp" ]; then
-                    lastc=$(tail -c 1 "$lf.mio-tmp" 2>/dev/null | tr '\000\n' 'ZN')
+                _lftmp="$lf.mio-tmp.$$"
+                tr -d '\000' < "$lf" > "$_lftmp" 2>/dev/null || { rm -f "$_lftmp" 2>/dev/null; continue; }
+                if [ -s "$_lftmp" ]; then
+                    lastc=$(tail -c 1 "$_lftmp" 2>/dev/null | tr '\000\n' 'ZN')
                     if [ "$lastc" != "N" ]; then
-                        lastline=$(tail -n 1 "$lf.mio-tmp" 2>/dev/null)
+                        lastline=$(tail -n 1 "$_lftmp" 2>/dev/null)
                         case "$lastline" in
-                            /*) printf '\n' >> "$lf.mio-tmp" 2>/dev/null ;;
+                            /*) printf '\n' >> "$_lftmp" 2>/dev/null ;;
                             *)  awk 'NR > 1 { print prev } { prev = $0 } END { if (NR > 1) print prev }' \
-                                    "$lf.mio-tmp" > "$lf.mio-tmp2" 2>/dev/null &&
-                                    mv "$lf.mio-tmp2" "$lf.mio-tmp" 2>/dev/null
-                                [ -s "$lf.mio-tmp" ] && [ "$(tail -c 1 "$lf.mio-tmp" 2>/dev/null | tr '\000\n' 'ZN')" = "N" ] ||
-                                    printf '\n' >> "$lf.mio-tmp" 2>/dev/null ;;
+                                    "$_lftmp" > "$_lftmp.2" 2>/dev/null &&
+                                    mv "$_lftmp.2" "$_lftmp" 2>/dev/null
+                                [ -s "$_lftmp" ] && [ "$(tail -c 1 "$_lftmp" 2>/dev/null | tr '\000\n' 'ZN')" = "N" ] ||
+                                    printf '\n' >> "$_lftmp" 2>/dev/null ;;
                         esac
                     fi
-                    [ -s "$lf.mio-tmp" ] || printf '/.\n' > "$lf.mio-tmp" 2>/dev/null
+                    [ -s "$_lftmp" ] || printf '/.\n' > "$_lftmp" 2>/dev/null
                 else
-                    printf '/.\n' > "$lf.mio-tmp" 2>/dev/null
+                    printf '/.\n' > "$_lftmp" 2>/dev/null
                 fi
-                if ! cmp -s "$lf" "$lf.mio-tmp" 2>/dev/null; then
-                    mv "$lf.mio-tmp" "$lf" 2>/dev/null && chmod 644 "$lf" 2>/dev/null &&
+                if ! cmp -s "$lf" "$_lftmp" 2>/dev/null; then
+                    mv "$_lftmp" "$lf" 2>/dev/null && chmod 644 "$lf" 2>/dev/null &&
                         fixed_lists=$((fixed_lists + 1))
                 else
-                    rm -f "$lf.mio-tmp" 2>/dev/null
+                    rm -f "$_lftmp" 2>/dev/null
                 fi
             done
+            : > "$PREFIX/var/lib/dpkg/.mio-lists-nul-cleaned" 2>/dev/null
             [ "$fixed_lists" -gt 0 ] && printf '  dpkg dosya listeleri onarıldı: %s\n' "$fixed_lists" \
                 || printf '  dpkg dosya listeleri: tamam\n'
         fi
@@ -2842,13 +2913,13 @@ case "$COMMAND" in
             done
             if [ "$_bad" -gt 0 ]; then
                 printf 'onarıldı:%s\n' "$_dbdirs"
-                mio_repair_dpkg_db
+                MIO_FORCE_DB_REPAIR=1 mio_repair_dpkg_db
             else
                 printf 'sağlam (yazılabilir)\n'
             fi
         else
             printf 'var/lib/dpkg yok, oluşturuluyor\n'
-            mio_repair_dpkg_db
+            MIO_FORCE_DB_REPAIR=1 mio_repair_dpkg_db
         fi
 
         printf '\n=== test ===\n'

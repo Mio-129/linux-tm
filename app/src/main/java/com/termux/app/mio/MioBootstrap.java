@@ -384,6 +384,10 @@ public final class MioBootstrap {
             "var/lib/apt/lists/partial",
             "var/cache/apt/archives/partial",
             "var/lib/dpkg",
+            "var/lib/dpkg/info",
+            "var/lib/dpkg/updates",
+            "var/lib/dpkg/parts",
+            "var/lib/dpkg/triggers",
             "var/log/apt",
             "etc/apt/trusted.gpg.d",
             "tmp"
@@ -425,6 +429,10 @@ public final class MioBootstrap {
         for (File file : files) {
             if (!file.isFile()) continue;
             String name = file.getName();
+            if (name.contains(".mio-tmp")) {
+                if (file.delete()) repaired = true;
+                continue;
+            }
             boolean isList = name.endsWith(".list");
             if (!isList && !name.endsWith(".md5sums") && !name.endsWith(".conffiles") && !name.endsWith(".triggers")) {
                 continue;
@@ -454,6 +462,10 @@ public final class MioBootstrap {
             if (!Arrays.equals(raw, cleaned)) {
                 if (writeBytes(file, cleaned)) repaired = true;
             }
+        }
+        File marker = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/.mio-lists-nul-cleaned");
+        if (!marker.exists() || repaired) {
+            writeBytes(marker, new byte[]{'1', '\n'});
         }
         return repaired;
     }
