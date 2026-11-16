@@ -19,6 +19,9 @@
 #   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur
 #   mio teshis              Kurulu komutları ve sürümü kontrol eder (menü açılmıyorsa)
 #   mio apt-fix             apt/dpkg onarımı; paket kurmayı gerçek bir deb ile prova eder
+#   mio apt <komut>         apt çalıştırır (ör: mio apt install sl; argümansız: durum)
+#   mio pkg <komut>         pkg çalıştırır (ör: mio pkg install sl)
+#   mio install <paket>     hem apt hem pkg'ye bakar; ikisinde de varsa sorar (1 apt / 2 pkg)
 #   mio deb-cevir -t <deb>  Bir paketin neden çevrilemediğini söyler
 #   mio menuler             Yan menüleri aç/kapat
 #   mio oturum              Yeni oturum aç
@@ -70,6 +73,9 @@ Kullanım: mio [komut]
   mio paket sifirla       Örnek paketi (Older-Pack) oluşturur.
   mio paket log <ad>      Paketin son çalıştırma günlüğünü gösterir.
   mio apt-fix             apt/dpkg sorunlarını onarır, test eder, en hızlı depoyu seçer
+  mio apt [komut...]      apt çalıştırır (ör: mio apt install sl; argümansız: apt durumu)
+  mio pkg [komut...]      pkg çalıştırır (ör: mio pkg install sl)
+  mio install <paket>     Hem apt hem pkg'de arar; ikisinde de varsa sorar (1 apt, 2 pkg)
   mio sarmalayici         apt/dpkg sarmalayıcılarını tazeler (uygulama her açılışta çağırır)
   mio deb-cevir <deb>     .deb içindeki com.termux yollarını com.mio yapar
   mio deb-cevir -t <deb>  Paketin neden çevrilemediğini söyler (hiçbir şeyi değiştirmez)
@@ -1213,9 +1219,11 @@ mio_convert_deb() {
         [ -f "$_ctl/$_f" ] && chmod 755 "$_ctl/$_f" 2>/dev/null
     done
 
-    # 3c) DİZİN İZİNLERİ: dpkg, dosyayı hedef dizine `*.dpkg-new` olarak yazar; dizin yazılabilir
-    #     değilse "unable to create ... Permission denied" verir. Paketlerde dizin modu 0555 gibi
-    #     gelebiliyor (ya da yedek yolda öyle oluşuyor); dönüşümde düzeltilir.
+    # 3c) DİZİN VE DOSYA İZİNLERİ: dpkg, dosyayı hedef dizine `*.dpkg-new` olarak yazar; dizin
+    #     yazılabilir değilse "unable to create ... Permission denied" verir. Ayrıca non-root
+    #     Android'de dpkg bazı 0444 dosyaları fsync için O_WRONLY ile açmaya çalışırken
+    #     "unable to open ...dpkg-new: Permission denied" verebiliyor; bu yüzden salt-okunur
+    #     normal dosyalara da sahip yazma izni (u+w) eklenir.
     find "$_root" -type d 2>/dev/null | while IFS= read -r _d; do
         case "$_d" in
             "$_root"/*/bin|"$_root"/*/sbin) _m=755 ;;
@@ -1224,6 +1232,7 @@ mio_convert_deb() {
         [ -w "$_d" ] || chmod u+w "$_d" 2>/dev/null
         chmod "$_m" "$_d" 2>/dev/null
     done
+    find "$_root" -type f ! -perm -u+w -exec chmod u+w {} \; 2>/dev/null
 
     # 4) yeniden paketle: DEBIAN dizini kontrol dosyalarından, veri ağacı çıkarılan kökten
     cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
@@ -1717,6 +1726,212 @@ fix_sources() {
     return 0
 }
 
+# ---------------------------------------------------------------------------------------------
+# mio apt / mio pkg / mio install
+#
+#   mio apt <komut...>     -> sarmalayıcılar üzerinden apt çalıştırır (argümansız: durum raporu)
+#   mio pkg <komut...>     -> sarmalayıcılar üzerinden Termux pkg çalıştırır
+#   mio install <paket...> -> hem apt hem pkg depolarında arar; ikisinde de varsa sorar:
+#                             1) apt   2) pkg
+# ---------------------------------------------------------------------------------------------
+mio_apt_has_lists() {
+    for _lf in "$PREFIX"/var/lib/apt/lists/*Packages*; do
+        [ -s "$_lf" ] && return 0
+    done
+    return 1
+}
+
+mio_ensure_apt_lists() {
+    mio_apt_has_lists && return 0
+    printf 'mio: paket listeleri boş, depolar güncelleniyor...\n'
+    if [ -x "$PREFIX/bin/apt" ]; then
+        "$PREFIX/bin/apt" update </dev/null
+        return $?
+    elif [ -x "$PREFIX/bin/apt-get" ]; then
+        "$PREFIX/bin/apt-get" update </dev/null
+        return $?
+    elif [ -x "$PREFIX/bin/pkg" ]; then
+        "$PREFIX/bin/pkg" update </dev/null
+        return $?
+    fi
+    return 1
+}
+
+mio_run_apt() {
+    fix_sources >/dev/null 2>&1
+    _apt_bin=""
+    if [ -x "$PREFIX/bin/apt" ]; then
+        _apt_bin="$PREFIX/bin/apt"
+    elif [ -x "$PREFIX/bin/apt-get" ]; then
+        _apt_bin="$PREFIX/bin/apt-get"
+    else
+        printf 'mio: apt bulunamadı (%s/bin/apt)\n' "$PREFIX" >&2
+        return 1
+    fi
+    case "${1:-}" in
+        install|show|search|policy|upgrade|full-upgrade|dist-upgrade)
+            mio_ensure_apt_lists || :
+            ;;
+    esac
+    "$_apt_bin" "$@"
+}
+
+mio_run_pkg() {
+    fix_sources >/dev/null 2>&1
+    if [ ! -x "$PREFIX/bin/pkg" ]; then
+        printf 'mio: pkg bulunamadı (%s/bin/pkg)\n' "$PREFIX" >&2
+        return 1
+    fi
+    "$PREFIX/bin/pkg" "$@"
+}
+
+mio_apt_has_pkg() {
+    _p="$1"
+    [ -n "$_p" ] || return 1
+    if [ -x "$PREFIX/bin/apt-cache" ]; then
+        if env -u LD_PRELOAD APT_CONFIG="$PREFIX/etc/apt/apt.conf.d/mio-apt.conf" \
+            "$PREFIX/bin/apt-cache" show "$_p" </dev/null 2>/dev/null | grep -q '^Package: '; then
+            return 0
+        fi
+    fi
+    if [ -x "$PREFIX/bin/apt" ]; then
+        if "$PREFIX/bin/apt" show "$_p" </dev/null 2>/dev/null | grep -q '^Package: '; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+mio_pkg_has_pkg() {
+    _p="$1"
+    [ -n "$_p" ] || return 1
+    if [ -x "$PREFIX/bin/pkg" ]; then
+        if TERMUX_PKG_NO_MIRROR_SELECT=1 APT_CONFIG="$PREFIX/etc/apt/apt.conf.d/mio-apt.conf" \
+            "$PREFIX/bin/pkg" show "$_p" </dev/null 2>/dev/null | grep -q '^Package: '; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+mio_install_cmd() {
+    if [ $# -eq 0 ]; then
+        printf 'Kullanım: mio install <paket> [-y] [--apt|--pkg]\n' >&2
+        return 2
+    fi
+
+    _force_mgr=""
+    _pass_flags=""
+    _pkg_names=""
+    _pkg_count=0
+    for _arg in "$@"; do
+        case "$_arg" in
+            --apt) _force_mgr="apt" ;;
+            --pkg) _force_mgr="pkg" ;;
+            -h|--help)
+                printf 'Kullanım: mio install <paket> [-y] [--apt|--pkg]\n'
+                printf "Paketi hem apt hem pkg depolarında arar; ikisinde de varsa hangisinden indirileceğini sorar.\n"
+                return 0
+                ;;
+            -*)
+                _pass_flags="$_pass_flags${_pass_flags:+ }$_arg"
+                ;;
+            *)
+                _pkg_names="$_pkg_names${_pkg_names:+ }$_arg"
+                _pkg_count=$((_pkg_count + 1))
+                ;;
+        esac
+    done
+
+    if [ "$_pkg_count" -eq 0 ]; then
+        printf 'mio: paket adı belirtilmedi. Kullanım: mio install <paket>\n' >&2
+        return 2
+    fi
+
+    fix_sources >/dev/null 2>&1
+
+    _did_update=0
+    if ! mio_apt_has_lists; then
+        mio_ensure_apt_lists && _did_update=1
+    fi
+
+    _in_apt=1
+    _in_pkg=1
+    [ -x "$PREFIX/bin/apt" ] || [ -x "$PREFIX/bin/apt-get" ] || _in_apt=0
+    [ -x "$PREFIX/bin/pkg" ] || _in_pkg=0
+
+    for _p in $_pkg_names; do
+        [ "$_in_apt" -eq 1 ] && ! mio_apt_has_pkg "$_p" && _in_apt=0
+        [ "$_in_pkg" -eq 1 ] && ! mio_pkg_has_pkg "$_p" && _in_pkg=0
+    done
+
+    if [ "$_in_apt" -eq 0 ] && [ "$_in_pkg" -eq 0 ] && [ "$_did_update" -eq 0 ]; then
+        printf 'mio: paket listesi güncellenip tekrar aranıyor...\n'
+        if [ -x "$PREFIX/bin/apt" ]; then
+            "$PREFIX/bin/apt" update </dev/null >/dev/null 2>&1 || :
+        elif [ -x "$PREFIX/bin/pkg" ]; then
+            "$PREFIX/bin/pkg" update </dev/null >/dev/null 2>&1 || :
+        fi
+        _in_apt=1
+        _in_pkg=1
+        [ -x "$PREFIX/bin/apt" ] || [ -x "$PREFIX/bin/apt-get" ] || _in_apt=0
+        [ -x "$PREFIX/bin/pkg" ] || _in_pkg=0
+        for _p in $_pkg_names; do
+            [ "$_in_apt" -eq 1 ] && ! mio_apt_has_pkg "$_p" && _in_apt=0
+            [ "$_in_pkg" -eq 1 ] && ! mio_pkg_has_pkg "$_p" && _in_pkg=0
+        done
+    fi
+
+    # Ne apt ne pkg depolarında yoksa yerel mio paketlerini (~/.mio/pkgs) kontrol et
+    if [ "$_in_apt" -eq 0 ] && [ "$_in_pkg" -eq 0 ]; then
+        if [ "$_pkg_count" -eq 1 ] && pkg_find "$_pkg_names" >/dev/null 2>&1; then
+            printf "mio: '%s' yerel mio paketlerinde bulundu, kuruluyor...\n" "$_pkg_names"
+            pkg_install "$_pkg_names"
+            return $?
+        fi
+        printf "mio: '%s' paketi ne apt'de ne pkg'de bulundu.\n" "$_pkg_names" >&2
+        return 1
+    fi
+
+    _chosen=""
+    if [ "$_force_mgr" = "apt" ] && [ "$_in_apt" -eq 1 ]; then
+        _chosen="apt"
+    elif [ "$_force_mgr" = "pkg" ] && [ "$_in_pkg" -eq 1 ]; then
+        _chosen="pkg"
+    elif [ "$_in_apt" -eq 1 ] && [ "$_in_pkg" -eq 1 ]; then
+        printf "'%s' hem apt hem pkg'de bulundu.\n" "$_pkg_names"
+        printf 'Hangisinden indirilsin?\n'
+        printf '  1) apt\n'
+        printf '  2) pkg\n'
+        printf 'Seçim [1]: '
+        read -r _choice || _choice=""
+        case "$_choice" in
+            ""|1|apt|APT) _chosen="apt" ;;
+            2|pkg|PKG)    _chosen="pkg" ;;
+            *)
+                printf 'mio: geçersiz seçim: %s (1: apt, 2: pkg)\n' "$_choice" >&2
+                return 2
+                ;;
+        esac
+    elif [ "$_in_apt" -eq 1 ]; then
+        printf "mio: '%s' apt deposunda bulundu, apt ile kuruluyor...\n" "$_pkg_names"
+        _chosen="apt"
+    else
+        printf "mio: '%s' pkg deposunda bulundu, pkg ile kuruluyor...\n" "$_pkg_names"
+        _chosen="pkg"
+    fi
+
+    if [ "$_chosen" = "apt" ]; then
+        # shellcheck disable=SC2086
+        mio_run_apt install $_pass_flags $_pkg_names
+        return $?
+    else
+        # shellcheck disable=SC2086
+        mio_run_pkg install $_pass_flags $_pkg_names
+        return $?
+    fi
+}
+
 run_am() {
     # Önce sistem `am`: termux-am ikilisi `com.termux` paket kimliğiyle derlendiği için yayınları
     # `com.termux` adına yapar ve bu uygulamaya (com.mio) ulaştıramaz.
@@ -1808,7 +2023,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 38 (menü, ses, paketler, istek dosyası, güvenli depo, dpkg-deb kancası, dpkg veritabanı/dizin onarımı, kalıcı duvar kağıdı/ses)\n'
+    printf 'mio sürüm: 39 (menü, ses, paketler, mio apt/pkg/install, prova 0644 onarımı, güvenli depo, dpkg-deb kancası)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2348,7 +2563,7 @@ case "$COMMAND" in
         esac
         exit $?
         ;;
-    paket|paketler|packages|pkg)
+    paket|paketler|packages)
         if [ $# -eq 0 ]; then
             pkg_list
             exit $?
@@ -2394,6 +2609,53 @@ case "$COMMAND" in
                 exit 2
                 ;;
         esac
+        ;;
+    pkg)
+        if [ $# -eq 0 ]; then
+            if [ -x "$PREFIX/bin/pkg" ]; then
+                mio_run_pkg --help
+                exit $?
+            fi
+            pkg_list
+            exit $?
+        fi
+        case "$1" in
+            kur-fix|baslat|başlat|sifirla|sıfırla|ornek|örnek|template|init|log|gunluk|günlük)
+                PKG_ACTION="$1"
+                shift
+                case "$PKG_ACTION" in
+                    kur-fix)
+                        [ $# -gt 0 ] || { printf 'mio: kullanım: mio paket kur <ad>\n' >&2; exit 2; }
+                        pkg_install "$1"
+                        exit $?
+                        ;;
+                    baslat|başlat) pkg_startup_all; exit $? ;;
+                    sifirla|sıfırla|ornek|örnek|template|init) pkg_create_template; exit $? ;;
+                    log|gunluk|günlük)
+                        [ $# -gt 0 ] || { printf 'mio: kullanım: mio paket log <ad>\n' >&2; exit 2; }
+                        pkg_log "$1"
+                        exit $?
+                        ;;
+                esac
+                ;;
+            kur)
+                shift
+                if [ $# -eq 1 ] && pkg_find "$1" >/dev/null 2>&1; then
+                    pkg_install "$1"
+                    exit $?
+                fi
+                mio_run_pkg install "$@"
+                exit $?
+                ;;
+            *)
+                mio_run_pkg "$@"
+                exit $?
+                ;;
+        esac
+        ;;
+    install|kur)
+        mio_install_cmd "$@"
+        exit $?
         ;;
     teshis|teşhis|diagnose|check|doctor)
         diagnose
@@ -2632,14 +2894,12 @@ case "$COMMAND" in
         printf 'Package: mio-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: mio <mio@local>\nDescription: mio install probe\n' \
             > "$probe_dir/root/DEBIAN/control" 2>/dev/null
         printf 'probe\n' > "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
-        # DİKKAT: hedef dizin 0555 YAPILMAZ. dpkg dosyayı önce '<ad>.dpkg-new' olarak yazar;
-        # hedef dizin yazılamazsa dpkg kendi kurulumunu yapamaz ve prova her zaman
-        # "unable to create ...probe.dpkg-new: Permission denied" verirdi. Bu imkansız bir
-        # senaryoydu: gerçek paketler de dizinleri yazılabilir bırakır.
-        # Burada yalnız DOSYANIN salt-okunur olması sınanır (eski ağacın silinmesi için);
-        # dizin 0755 kalır.
+        # DİKKAT: hedef dizin 0555 YAPILMAZ ve dosya da 0444 YAPILMAZ.
+        # - Hedef dizin yazılamazsa dpkg "unable to create ...probe.dpkg-new: Permission denied" verir.
+        # - Dosya 0444 olursa non-root Android'de dpkg deferred fsync sırasında dosyayı O_WRONLY
+        #   ile tekrar açarken "unable to open ...probe.dpkg-new: Permission denied" verir.
+        # Bu yüzden hem dosya 0644 hem dizin 0755 olarak sınanır.
         chmod 644 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
-        chmod 444 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name/probe" 2>/dev/null
         chmod 755 "$probe_dir/root/data/data/com.termux/files/usr/share/$probe_name" 2>/dev/null
         : > "$probe_admin/status"
         : > "$probe_admin/available"
@@ -2702,10 +2962,12 @@ case "$COMMAND" in
         fi
 
         printf '\nSONUÇ: '
-        if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
+        if [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ] && [ "$probe_ok" -eq 1 ]; then
             printf 'apt çalışıyor.\n'
             printf 'Paket listelerini indirmek için: apt update\n'
-            printf 'Sonra: apt install <paket> -y\n'
+            printf 'Sonra: mio install <paket>  (veya mio apt install <paket> / mio pkg install <paket>)\n'
+        elif [ -z "$missing_path" ] && [ "${uris:-0}" -gt 0 ]; then
+            printf 'depo okunuyor ama paket kurma provası başarısız (yukarıdaki satırlara bak)\n'
         else
             printf 'yukarıdaki satırlara bak (eksik program ya da depo okuma hatası)\n'
         fi
@@ -2784,7 +3046,23 @@ case "$COMMAND" in
         printf '\nNOT: 4. adımda "did not start correctly" yoksa apt yöntemi başlatabiliyor demektir.\n'
         exit 0
         ;;
-    apt|sources-durum|apt-neden)
+    apt)
+        if [ $# -eq 0 ]; then
+            sources_report
+            exit 0
+        fi
+        case "$1" in
+            durum|rapor|status|neden)
+                sources_report
+                exit 0
+                ;;
+            *)
+                mio_run_apt "$@"
+                exit $?
+                ;;
+        esac
+        ;;
+    sources-durum|apt-neden)
         sources_report
         exit 0
         ;;
