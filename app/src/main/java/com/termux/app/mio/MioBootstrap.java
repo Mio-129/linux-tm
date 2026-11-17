@@ -65,6 +65,8 @@ public final class MioBootstrap {
         repairAptState();
         repairAptConfigFile();
         ensureHushLoginOnce();
+        ensureHushLoginScript();
+        silenceLoginSecondStageFallback();
 
         File binDir = TermuxConstants.TERMUX_BIN_PREFIX_DIR;
         if (!binDir.isDirectory()) {
@@ -681,6 +683,109 @@ public final class MioBootstrap {
             }
         } catch (Exception e) {
             Logger.logWarn(LOG_TAG, "Failed to ensure .hushlogin: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Install `$PREFIX/etc/profile.d/mio-hushlogin.sh` so that writing `echo ABC`, `echo "ABC"`,
+     * or plain text (`ABC`) into `~/.hushlogin` prints it on new terminal sessions while keeping
+     * an empty `~/.hushlogin` completely silent.
+     */
+    public static void ensureHushLoginScript() {
+        File profileD = new File(TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH, "profile.d");
+        if (!profileD.isDirectory()) {
+            //noinspection ResultOfMethodCallIgnored
+            profileD.mkdirs();
+        }
+        if (!profileD.isDirectory()) return;
+
+        File target = new File(profileD, "mio-hushlogin.sh");
+        String script = "# mio: display ~/.hushlogin text or echo lines on new session\n"
+            + "if [ -z \"${_MIO_HUSHLOGIN_SHOWN:-}\" ] && [ -s \"$HOME/.hushlogin\" ]; then\n"
+            + "    _MIO_HUSHLOGIN_SHOWN=1\n"
+            + "    export _MIO_HUSHLOGIN_SHOWN\n"
+            + "    while IFS= read -r _mio_hl || [ -n \"$_mio_hl\" ]; do\n"
+            + "        case \"$_mio_hl\" in\n"
+            + "            \"\"|\"#\"*) continue ;;\n"
+            + "            \"echo \"*|\"echo\t\"*)\n"
+            + "                _mio_arg=${_mio_hl#echo}\n"
+            + "                _mio_arg=$(printf '%s' \"$_mio_arg\" | sed 's/^[[:space:]]*//')\n"
+            + "                case \"$_mio_arg\" in\n"
+            + "                    '\"'*|\"'\"*|-*)\n"
+            + "                        sh -c \"$_mio_hl\"\n"
+            + "                        ;;\n"
+            + "                    *)\n"
+            + "                        printf '%s\\n' \"$_mio_arg\"\n"
+            + "                        ;;\n"
+            + "                esac\n"
+            + "                ;;\n"
+            + "            \"printf \"*|\"printf\t\"*)\n"
+            + "                sh -c \"$_mio_hl\"\n"
+            + "                ;;\n"
+            + "            *)\n"
+            + "                printf '%s\\n' \"$_mio_hl\"\n"
+            + "                ;;\n"
+            + "        esac\n"
+            + "    done < \"$HOME/.hushlogin\"\n"
+            + "    unset _mio_hl _mio_arg\n"
+            + "fi\n";
+        String current = target.isFile() ? readText(target) : null;
+        if (!script.equals(current)) {
+            writeText(target, script);
+        }
+    }
+
+    /**
+     * Silence the fallback second-stage banner inside `$PREFIX/bin/login` if present.
+     */
+    public static void silenceLoginSecondStageFallback() {
+        File login = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "login");
+        if (!login.isFile() || login.length() > 512 * 1024) return;
+        byte[] raw = readAllBytesQuiet(login);
+        if (raw == null || raw.length < 4) return;
+        // Skip if ELF binary
+        if (raw[0] == 0x7f && raw[1] == 'E' && raw[2] == 'L' && raw[3] == 'F') return;
+        String content;
+        try {
+            content = new String(raw, "UTF-8");
+        } catch (Exception e) {
+            return;
+        }
+        if (content.contains("# mio-silent-second-stage")) return;
+        if (!content.contains("Starting fallback run of termux bootstrap second stage") &&
+            !content.contains("termux-bootstrap-second-stage")) {
+            return;
+        }
+
+        String[] lines = content.split("\n", -1);
+        StringBuilder out = new StringBuilder(content.length() + 128);
+        boolean modified = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.trim();
+            if (trimmed.contains("Starting fallback run of termux bootstrap second stage")) {
+                line = ": # mio-silent-second-stage";
+                modified = true;
+            } else if (trimmed.contains("termux-bootstrap-second-stage.sh") &&
+                (trimmed.startsWith("\"") || trimmed.startsWith("$") || trimmed.startsWith("/")) &&
+                !trimmed.contains(">/dev/null") && !trimmed.contains("bootstrap-second-stage.log")) {
+                line = line + " >/dev/null 2>&1";
+                modified = true;
+            } else if (trimmed.contains("TERMUX_BOOTSTRAP__SECOND_STAGE_FILE") &&
+                (trimmed.startsWith("\"$") || trimmed.startsWith("'$") || trimmed.startsWith("$")) &&
+                !trimmed.contains("=") && !trimmed.contains(">/dev/null")) {
+                line = line + " >/dev/null 2>&1";
+                modified = true;
+            }
+            out.append(line);
+            if (i < lines.length - 1) out.append('\n');
+        }
+        if (modified) {
+            boolean exec = login.canExecute();
+            if (writeText(login, out.toString()) && exec) {
+                //noinspection ResultOfMethodCallIgnored
+                login.setExecutable(true, false);
+            }
         }
     }
 

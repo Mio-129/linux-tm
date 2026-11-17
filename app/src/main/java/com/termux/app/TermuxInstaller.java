@@ -323,17 +323,23 @@ final class TermuxInstaller {
         File sh = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "sh");
         if (!sh.isFile()) return;
 
-        File script = null;
-        for (String rel : new String[]{
-            "etc/termux/termux-bootstrap/second-stage/termux-bootstrap-second-stage.sh",
-            "etc/termux/bootstrap/termux-bootstrap-second-stage.sh"
-        }) {
-            File candidate = new File(TERMUX_PREFIX_DIR_PATH, rel);
-            if (candidate.isFile()) {
-                script = candidate;
-                break;
+        // Ensure dpkg maintainer scripts are executable before running second stage.
+        File dpkgInfoDir = new File(TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/info");
+        if (dpkgInfoDir.isDirectory()) {
+            File[] infoFiles = dpkgInfoDir.listFiles();
+            if (infoFiles != null) {
+                for (File f : infoFiles) {
+                    String n = f.getName();
+                    if (n.endsWith(".postinst") || n.endsWith(".preinst") ||
+                        n.endsWith(".postrm") || n.endsWith(".prerm")) {
+                        //noinspection ResultOfMethodCallIgnored
+                        f.setExecutable(true, false);
+                    }
+                }
             }
         }
+
+        File script = findSecondStageScript(TERMUX_PREFIX_DIR);
         if (script == null) return;
 
         //noinspection ResultOfMethodCallIgnored
@@ -354,6 +360,8 @@ final class TermuxInstaller {
             builder.environment().put("PREFIX", TERMUX_PREFIX_DIR_PATH);
             builder.environment().put("HOME", homeDir.getAbsolutePath());
             builder.environment().put("TMPDIR", tmpDir.getAbsolutePath());
+            builder.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+            builder.environment().put("TERMUX_BOOTSTRAP__SECOND_STAGE_ENTRYPOINT", "installer");
             builder.environment().put("DEBIAN_FRONTEND", "noninteractive");
             builder.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":"
                 + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets:/system/bin:/system/xbin");
@@ -363,7 +371,12 @@ final class TermuxInstaller {
                 Logger.logWarn(LOG_TAG, "Bootstrap second stage timed out after 60s");
                 process.destroy();
             } else {
-                Logger.logInfo(LOG_TAG, "Bootstrap second stage completed silently with exit code " + process.exitValue());
+                int code = process.exitValue();
+                Logger.logInfo(LOG_TAG, "Bootstrap second stage completed silently with exit code " + code);
+                if (code == 0 && script.exists()) {
+                    //noinspection ResultOfMethodCallIgnored
+                    script.delete();
+                }
             }
         } catch (Exception e) {
             Logger.logWarn(LOG_TAG, "Failed to run bootstrap second stage silently: " + e.getMessage());
@@ -372,9 +385,42 @@ final class TermuxInstaller {
         }
     }
 
+    @Nullable
+    private static File findSecondStageScript(@NonNull File dir) {
+        if (!dir.isDirectory()) return null;
+        for (String rel : new String[]{
+            "etc/termux/termux-bootstrap/second-stage/termux-bootstrap-second-stage.sh",
+            "etc/termux/bootstrap/termux-bootstrap-second-stage.sh",
+            "etc/termux/termux-bootstrap-second-stage.sh"
+        }) {
+            File candidate = new File(dir, rel);
+            if (candidate.isFile()) return candidate;
+        }
+        File etcTermux = new File(dir, "etc/termux");
+        if (etcTermux.isDirectory()) {
+            File found = searchSecondStageRecursive(etcTermux);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    @Nullable
+    private static File searchSecondStageRecursive(@NonNull File dir) {
+        File[] children = dir.listFiles();
+        if (children == null) return null;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                File found = searchSecondStageRecursive(child);
+                if (found != null) return found;
+            } else if (child.isFile() && child.getName().contains("second-stage") && child.getName().endsWith(".sh")) {
+                return child;
+            }
+        }
+        return null;
+    }
+
     /**
-     * Suppress the default Termux welcome/MOTD banner on first launch by creating `~/.hushlogin`
-     * and clearing the default `etc/motd*` files.
+     * Suppress the default Termux welcome/MOTD banner and fallback second-stage output on launch.
      */
     private static void suppressBootstrapWelcomeScreen() {
         try {
@@ -395,6 +441,8 @@ final class TermuxInstaller {
                     }
                 }
             }
+            com.termux.app.mio.MioBootstrap.silenceLoginSecondStageFallback();
+            com.termux.app.mio.MioBootstrap.ensureHushLoginScript();
         } catch (Exception e) {
             Logger.logWarn(LOG_TAG, "Failed to suppress welcome banner: " + e.getMessage());
         }

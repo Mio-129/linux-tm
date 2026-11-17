@@ -861,6 +861,14 @@ mio_pack_deb() {
         if command -v "$c" >/dev/null 2>&1; then _ddpkg="$c"; break; fi
     done
     if [ -n "$_ddpkg" ]; then
+        # Hız: varsayılan xz sıkıştırması Android'de paket başına 10-30 sn sürüyor.
+        # Geçici yerel .deb için `-Znone` (sıkıştırmasız) veya `-Zgzip -z1` 20 kat daha hızlıdır.
+        if "$_ddpkg" -Znone -b "$_pk_root" "$_pk_out" >/dev/null 2>&1 && [ -s "$_pk_out" ]; then
+            return 0
+        fi
+        if "$_ddpkg" -Zgzip -z1 -b "$_pk_root" "$_pk_out" >/dev/null 2>&1 && [ -s "$_pk_out" ]; then
+            return 0
+        fi
         if "$_ddpkg" -b "$_pk_root" "$_pk_out" >/dev/null 2>&1 && [ -s "$_pk_out" ]; then
             return 0
         fi
@@ -1122,25 +1130,32 @@ mio_convert_deb() {
     done
     [ -n "$_ddpkg" ] || { printf 'mio: dpkg-deb yok, paket çevrilemedi\n' >&2; return 1; }
 
-    # tar seçimi: `--transform` destekleyeni tercih et (GNU tar). Cihazda bazen `$PREFIX/bin/tar`
-    # yok ya da toybox tar (transform yok); o zaman üye üye yedek yol kullanılır.
+    # tar seçimi: GNU tar (`--transform` destekli) hızlıca `--version` üzerinden seçilir;
+    # yalnızca belirsizse geçici dizin sınaması yapılır.
     _tar=""
     _tar_tf=0
     for c in "$PREFIX/bin/tar" tar "$PREFIX/bin/gtar" gtar; do
         command -v "$c" >/dev/null 2>&1 || continue
-        _chk="$PREFIX/tmp/mio-tar-sel"
+        [ -z "$_tar" ] && _tar="$c"
+        if "$c" --version 2>/dev/null | grep -q 'GNU tar'; then
+            _tar="$c"
+            _tar_tf=1
+            break
+        fi
+    done
+    if [ "$_tar_tf" -eq 0 ] && [ -n "$_tar" ]; then
+        _chk="$PREFIX/tmp/mio-tar-sel.$$"
         rm -rf "$_chk" 2>/dev/null
         mkdir -p "$_chk/aa" 2>/dev/null
         : > "$_chk/aa/f" 2>/dev/null
-        ( cd "$_chk" && "$c" --transform 's|aa|bb|' -cf "$_chk/out.tar" aa ) >/dev/null 2>&1
+        ( cd "$_chk" && "$_tar" --transform 's|aa|bb|' -cf "$_chk/out.tar" aa ) >/dev/null 2>&1
         _out=""
-        [ -s "$_chk/out.tar" ] && _out=$( "$c" -tf "$_chk/out.tar" 2>/dev/null | head -n 3 )
+        [ -s "$_chk/out.tar" ] && _out=$( "$_tar" -tf "$_chk/out.tar" 2>/dev/null | head -n 3 )
         rm -rf "$_chk" 2>/dev/null
-        if [ -z "$_tar" ]; then _tar="$c"; fi
         case "$_out" in
-            *bb*) _tar="$c"; _tar_tf=1; break ;;
+            *bb*) _tar_tf=1 ;;
         esac
-    done
+    fi
 
     # Hızlı yol: paket GERÇEKTEN com.mio yolluysa dokunma.
     _need=0
@@ -1335,9 +1350,9 @@ mio_convert_deb() {
         return 1
     fi
 
-    # 6) yerine koy ve tekrar doğrula
-    if cat "$_work/new.deb" > "$_deb" 2>/dev/null &&
-       ! "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
+    # 6) yerine koy (`new.deb` az önce doğrulandı; aynı dosya sisteminde `mv -f` anlıktır)
+    if mv -f "$_work/new.deb" "$_deb" 2>/dev/null || cat "$_work/new.deb" > "$_deb" 2>/dev/null; then
+        chmod 644 "$_deb" 2>/dev/null || :
         printf 'mio: paket com.mio yollarına çevrildi: %s\n' "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
         return 0
@@ -1583,8 +1598,8 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı hem $PREFIX/bin/dpkg hem korumalı $PREFIX/libexec/mio/dpkg olarak güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=16" "$wrapper" 2>/dev/null && \
-       grep -q "MIO_DPKG_WRAPPER_VERSION=16" "$prot" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=17" "$wrapper" 2>/dev/null && \
+       grep -q "MIO_DPKG_WRAPPER_VERSION=17" "$prot" 2>/dev/null; then
         return 0
     fi
 
@@ -1601,7 +1616,7 @@ install_dpkg_wrapper() {
 #!@@PREFIX@@/bin/sh
 # mio dpkg sarmalayıcısı: com.termux yollu .deb dosyalarını com.mio için yeniden paketler.
 # Dönüştürme mantığı bu dosyada kopya tutulmaz; `mio` betiğine devredilir (tek kaynak).
-MIO_DPKG_WRAPPER_VERSION=16
+MIO_DPKG_WRAPPER_VERSION=17
 prefix=@@PREFIX@@
 bin="$prefix/bin"
 real="$bin/dpkg.mio-real"
@@ -1626,10 +1641,14 @@ if [ ! -x "$real" ]; then
     exit 1
 fi
 
+_did_conv=0
+_has_rec=0
 for a in "$@"; do
     case "$a" in
+        -R|--recursive) _has_rec=1 ;;
         *.deb)
             [ -f "$a" ] || continue
+            _did_conv=1
             if [ ! -r "$a" ]; then
                 printf 'mio: paket okunamıyor: %s\n' "$a" >&2
                 failed=1
@@ -1676,6 +1695,9 @@ if [ "$_need_prep" -eq 1 ]; then
 fi
 
 export MIO_DPKG_RUNNING=1
+if [ "$_did_conv" -eq 1 ] && [ "$_has_rec" -eq 0 ]; then
+    export MIO_DEB_PRECONVERTED=1
+fi
 exec "$real" "$@"
 MIO_EOF
     sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
@@ -1700,8 +1722,8 @@ install_dpkg_deb_wrapper() {
     prot="$prot_dir/dpkg-deb"
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
-    if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=3" "$wrapper" 2>/dev/null && \
-       grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=3" "$prot" 2>/dev/null; then
+    if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=4" "$wrapper" 2>/dev/null && \
+       grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=4" "$prot" 2>/dev/null; then
         return 0
     fi
 
@@ -1716,14 +1738,15 @@ install_dpkg_deb_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio dpkg-deb sarmalayıcısı: .deb içindeki com.termux yollarını com.mio yapar.
-MIO_DPKG_DEB_WRAPPER_VERSION=3
+MIO_DPKG_DEB_WRAPPER_VERSION=4
 prefix=@@PREFIX@@
 bin="$prefix/bin"
 real="$bin/dpkg-deb.mio-real"
 mio="$bin/mio"
 
-# Dönüşüm sırasında mio kendisi dpkg-deb çağırır; o çağrılar dokunulmadan geçmeli (yoksa döngü)
-if [ -n "${MIO_DEB_CONVERTING:-}" ]; then
+# Dönüşüm sırasında mio kendisi dpkg-deb çağırır; veya dpkg sarmalayıcısı tüm .deb dosyalarını
+# zaten çevirmişse tekrar kontrol edip zaman kaybetme.
+if [ -n "${MIO_DEB_CONVERTING:-}" ] || [ "${MIO_DEB_PRECONVERTED:-0}" = "1" ]; then
     exec "$real" "$@"
 fi
 
@@ -2231,7 +2254,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 42 (menü, ses, paketler, mio apt/pkg/install, otomatik bağımlılık yükseltme, korumalı dpkg kancası, .so ELF yaması)\n'
+    printf 'mio sürüm: 43 (menü, ses, paketler, mio apt/pkg/install, hızlı deb-cevir -Znone, sessiz bootstrap, .hushlogin metin/echo, korumalı dpkg)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2698,7 +2721,7 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 42 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 43 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     resolve-deps)
