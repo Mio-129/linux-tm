@@ -7,6 +7,5 @@ include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := mio-elfpatch
-LOCAL_MODULE_FILENAME := libmio-elfpatch.so
 LOCAL_SRC_FILES := mio-elfpatch.c
 include $(BUILD_EXECUTABLE)

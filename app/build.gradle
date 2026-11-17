@@ -240,8 +240,56 @@ task downloadBootstraps() {
     }
 }
 
+def generatedMioJniLibsDir = new File(buildDir, "generated/mioJniLibs")
+
+android {
+    sourceSets {
+        main {
+            jniLibs.srcDirs += generatedMioJniLibsDir
+        }
+    }
+}
+
 afterEvaluate {
     android.applicationVariants.all { variant ->
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
+        def capName = variant.name.capitalize()
+        def copyTask = tasks.register("copyMioElfPatch${capName}") {
+            dependsOn "externalNativeBuild${capName}"
+            doLast {
+                def abis = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"] as Set
+                def found = [:]
+                [new File(buildDir, "intermediates"), new File(projectDir, ".cxx")].each { base ->
+                    if (!base.exists()) return
+                    fileTree(base).matching {
+                        include "**/mio-elfpatch"
+                    }.files.each { f ->
+                        def abi = f.parentFile?.name
+                        if (abi != null && abis.contains(abi)) {
+                            def isStripped = f.absolutePath.contains("${File.separator}libs${File.separator}")
+                            if (!found.containsKey(abi) || isStripped) {
+                                found[abi] = f
+                            }
+                        }
+                    }
+                }
+                if (found.isEmpty()) {
+                    throw new GradleException("mio-elfpatch binary was not produced by externalNativeBuild${capName}")
+                }
+                found.each { abi, src ->
+                    def dstDir = new File(generatedMioJniLibsDir, abi)
+                    dstDir.mkdirs()
+                    copy {
+                        from src
+                        into dstDir
+                        rename { "libmio-elfpatch.so" }
+                    }
+                }
+                logger.lifecycle("Packaged libmio-elfpatch.so for ABIs: " + found.keySet().sort())
+            }
+        }
+        tasks.named("merge${capName}JniLibFolders").configure {
+            dependsOn copyTask
+        }
     }
 }
