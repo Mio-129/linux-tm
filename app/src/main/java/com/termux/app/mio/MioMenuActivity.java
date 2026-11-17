@@ -307,14 +307,14 @@ public final class MioMenuActivity extends Activity {
             });
         mRoot.addView(windowRow);
 
-        // Holding the volume up key opens this panel directly
+        // Short tap opens Mio menu, long press opens the sessions drawer
         LinearLayout menuKeyRow = newRow();
         addButton(menuKeyRow, "Ses açma tuşu menü: " + (MioTextStyle.isMioMenuOnVolumeUp(this) ? "AÇIK" : "kapalı"),
             v -> {
                 boolean enabled = !MioTextStyle.isMioMenuOnVolumeUp(this);
                 MioTextStyle.setMioMenuOnVolumeUp(this, enabled);
                 toast(enabled
-                    ? "Ses açma tuşuna basılı tutunca menü açılacak."
+                    ? "Ses açma tuşuna tıklayınca Mio menü, basılı tutunca oturumlar açılacak."
                     : "Ses açma tuşu menüyü açmayacak.");
                 buildPanel();
             });

@@ -66,15 +66,15 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     boolean mVirtualControlKeyDown, mVirtualFnKeyDown;
 
     /**
-     * Holding the volume up key opens the Mio menu of this fork directly, so the menu can always
-     * be reached even while a package installation is running and commands cannot be typed.
+     * A short tap on the volume up key opens the Mio menu, and holding the key opens the sessions
+     * drawer, so both can be reached even while a package installation is running.
      */
     private static final long VOLUME_UP_LONG_PRESS_MS = 450;
 
     /** When the volume up key was pressed down, {@code 0} if it is not pressed. */
     private long mVolumeUpDownTime;
     private boolean mVolumeUpLongPressTriggered;
-    private final Runnable mVolumeUpLongPressRunnable = this::openMioMenuIfVolumeUpHeld;
+    private final Runnable mVolumeUpLongPressRunnable = this::openSessionsDrawerIfVolumeUpHeld;
 
     private Runnable mShowSoftKeyboardRunnable;
 
@@ -322,7 +322,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             return false;
         }
 
-        // Holding the volume up key opens the Mio menu even when volume keys are set to media mode
+        // A short tap on the volume up key opens the Mio menu, and a long press opens the sessions drawer
         boolean virtualKeysDisabled = mActivity.getProperties().areVirtualVolumeKeysDisabled();
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && MioTextStyle.isMioMenuOnVolumeUp(mActivity)) {
             return handleVolumeUpKey(event, down, !virtualKeysDisabled);
@@ -356,9 +356,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     /**
      * Handle the volume up key of the device.
      *
-     * Holding the key opens the Mio menu immediately after {@link #VOLUME_UP_LONG_PRESS_MS} so
-     * that it can always be reached even while a package installation is running. A short tap
-     * still raises media volume when volume keys are in media mode.
+     * A short tap opens the Mio menu (and raises media volume if volume keys are in media mode).
+     * Holding the key opens (or toggles) the sessions drawer after {@link #VOLUME_UP_LONG_PRESS_MS}.
      */
     private boolean handleVolumeUpKey(KeyEvent event, boolean down, boolean allowFn) {
         View anchor = mActivity.getTerminalView();
@@ -374,8 +373,9 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             mVolumeUpLongPressTriggered = false;
             mVirtualFnKeyDown = false;
 
-            if (hadPress && !triggered && !allowFn) {
-                raiseMediaVolume();
+            if (hadPress && !triggered) {
+                MioMenu.show(mActivity);
+                if (!allowFn) raiseMediaVolume();
             }
             return true;
         }
@@ -392,12 +392,19 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         return true;
     }
 
-    private void openMioMenuIfVolumeUpHeld() {
+    @SuppressLint("RtlHardcoded")
+    private void openSessionsDrawerIfVolumeUpHeld() {
         if (mVolumeUpDownTime != 0 && !mVolumeUpLongPressTriggered) {
             mVolumeUpLongPressTriggered = true;
             mVolumeUpDownTime = 0;
             mVirtualFnKeyDown = false;
-            MioMenu.show(mActivity);
+            if (mActivity.getDrawer() != null) {
+                if (mActivity.getDrawer().isDrawerOpen(Gravity.LEFT)) {
+                    mActivity.getDrawer().closeDrawers();
+                } else {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                }
+            }
         }
     }
 

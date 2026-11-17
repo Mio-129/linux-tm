@@ -62,6 +62,13 @@ jobs:
         if: always()
         run: |
           ls -l ./app/build/outputs/apk/debug/ || true
+          if [ -f ./app/build/outputs/apk/debug/mio_apt-android-7-debug_arm64-v8a.apk ]; then
+            unzip -l ./app/build/outputs/apk/debug/mio_apt-android-7-debug_arm64-v8a.apk | grep -E "libmio-elfpatch|libtermux-bootstrap" || true
+            if ! unzip -l ./app/build/outputs/apk/debug/mio_apt-android-7-debug_arm64-v8a.apk | grep -q "lib/arm64-v8a/libmio-elfpatch.so"; then
+              echo "::error::libmio-elfpatch.so missing from arm64-v8a APK!"
+              exit 1
+            fi
+          fi
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
