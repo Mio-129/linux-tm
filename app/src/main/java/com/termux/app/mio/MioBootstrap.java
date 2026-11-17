@@ -74,6 +74,7 @@ public final class MioBootstrap {
             return;
         }
 
+        installNativeElfPatcher(context);
         String installedVersion = readVersionFile();
         String currentVersion = getCurrentVersion(context);
         repairUnpatchedElfsIfNeeded(currentVersion);
@@ -1063,5 +1064,35 @@ public final class MioBootstrap {
         }
 
         return version.toString();
+    }
+
+    /**
+     * Expose the NDK-compiled native ELF patcher (`libmio-elfpatch.so`) as `$PREFIX/libexec/mio/mio-elfpatch`
+     * so `mio_patch_elf()` can patch binaries byte-for-byte in C without relying on shell `sed`/`grep`/`dd`.
+     */
+    private static void installNativeElfPatcher(@NonNull Context context) {
+        try {
+            String nativeDir = context.getApplicationInfo().nativeLibraryDir;
+            if (nativeDir == null || nativeDir.isEmpty()) return;
+            File nativeBin = new File(nativeDir, "libmio-elfpatch.so");
+            if (!nativeBin.isFile()) return;
+
+            File libexecDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "libexec/mio");
+            if (!libexecDir.isDirectory() && !libexecDir.mkdirs()) return;
+
+            String quotedBin = "'" + nativeBin.getAbsolutePath().replace("'", "'\\''") + "'";
+            String script = "#!" + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh\n"
+                + "exec " + quotedBin + " \"$@\"\n";
+            File wrapper = new File(libexecDir, "mio-elfpatch");
+            if (writeBytes(wrapper, script.getBytes("UTF-8"))) {
+                try {
+                    android.system.Os.chmod(wrapper.getAbsolutePath(), 0755);
+                } catch (Throwable ignored) {
+                    wrapper.setExecutable(true, false);
+                }
+            }
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to install native mio-elfpatch wrapper", e);
+        }
     }
 }

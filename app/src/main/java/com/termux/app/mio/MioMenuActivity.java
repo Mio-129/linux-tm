@@ -307,14 +307,14 @@ public final class MioMenuActivity extends Activity {
             });
         mRoot.addView(windowRow);
 
-        // A short press on the volume up key opens this panel, a long press stays the Fn key
+        // Holding the volume up key opens this panel directly
         LinearLayout menuKeyRow = newRow();
         addButton(menuKeyRow, "Ses açma tuşu menü: " + (MioTextStyle.isMioMenuOnVolumeUp(this) ? "AÇIK" : "kapalı"),
             v -> {
                 boolean enabled = !MioTextStyle.isMioMenuOnVolumeUp(this);
                 MioTextStyle.setMioMenuOnVolumeUp(this, enabled);
                 toast(enabled
-                    ? "Ses açma tuşuna kısa basınca menü açılacak."
+                    ? "Ses açma tuşuna basılı tutunca menü açılacak."
                     : "Ses açma tuşu menüyü açmayacak.");
                 buildPanel();
             });
@@ -445,67 +445,14 @@ public final class MioMenuActivity extends Activity {
         // ----------------------------------------------------------------------- packages -----
         addSection("Paketler");
 
-        List<MioPackages.Package> packages = MioPackages.getPackages();
-        List<MioPackages.Package> updatable = MioPackages.getUpdatablePackages();
-
-        addText(packages.isEmpty()
-            ? "Paket yok. ~/.mio/pkgs/<paket> klasörüne .a.sh, .b.sh ve .start-up.sh betiklerini koy."
-            : packages.size() + " paket • " + (updatable.isEmpty()
-                ? "hepsi güncel" : updatable.size() + " paket güncellenebilir"));
-
         LinearLayout packageRow = newRow();
-        addButton(packageRow, "Mio Paket", v -> showMioPackageStoreDialog());
-        addButton(packageRow, "Paket " + (updatable.isEmpty() ? "güncelle" : "güncelle (" + updatable.size() + ")"),
-            v -> updateAllPackages());
-        addButton(packageRow, "Örnek oluştur", v -> createTemplatePackage());
-        addButton(packageRow, "Yenile", v -> buildPanel());
+        addButton(packageRow, "Mio Paketler", v -> showMioPackageStoreDialog());
+        Button olderPackButton = addButton(packageRow, "Older-Pack", v -> runOlderPack());
+        olderPackButton.setOnLongClickListener(v -> {
+            showOlderPackOptionsDialog();
+            return true;
+        });
         mRoot.addView(packageRow);
-
-        LinearLayout moduleRow = newRow();
-        addButton(moduleRow, "Modül kur (ZIP)", v -> showModuleDialog());
-        addButton(moduleRow, "Modül klasörü", v -> runCommand(
-            "mkdir -p ~/.mio/modules && ls -l ~/.mio/modules"));
-        addButton(moduleRow, "VNC", v -> showVncDialog());
-        mRoot.addView(moduleRow);
-
-        if (!packages.isEmpty()) {
-            MioPackages.Package selected = getSelectedPackage(packages);
-            addText("Seçili paket: " + (selected == null ? "yok" : selected.getSummary()));
-
-            LinearLayout packageSelectRow = newRow();
-            for (MioPackages.Package pkg : packages) {
-                boolean isSelected = selected != null && selected.name.equals(pkg.name);
-                addButton(packageSelectRow, (isSelected ? "• " : "") + pkg.name, v -> selectPackage(pkg.name));
-                if (packageSelectRow.getChildCount() >= 3) {
-                    mRoot.addView(packageSelectRow);
-                    packageSelectRow = newRow();
-                }
-            }
-            if (packageSelectRow.getChildCount() > 0) mRoot.addView(packageSelectRow);
-
-            if (selected != null) {
-                LinearLayout packageActionRow = newRow();
-                addButton(packageActionRow, selected.isInstalled() ? "Yeniden kur" : "Kur",
-                    v -> installPackageRemotely(selected));
-                addButton(packageActionRow, "Güncelle", v -> installPackageRemotely(selected));
-                addButton(packageActionRow, "Başlangıç", v -> runPackageStartUp(selected));
-                mRoot.addView(packageActionRow);
-
-                LinearLayout packageActionRow2 = newRow();
-                addButton(packageActionRow2, "Günlük", v -> showPackageLog(selected));
-                addButton(packageActionRow2, selected.isEnabled() ? "Kapat" : "Aç",
-                    v -> togglePackage(selected));
-                addButton(packageActionRow2, "Düzenle", v -> showPackageEditor(selected));
-                addButton(packageActionRow2, "Klasör", v -> showPackageFolder(selected));
-                mRoot.addView(packageActionRow2);
-
-                String remoteUrl = selected.getRemoteUrl();
-                if (remoteUrl != null) addText("Kurulum kaynağı: " + remoteUrl);
-
-                String logTail = selected.getLogTail(3);
-                if (!logTail.isEmpty()) addText("Son çalıştırma:\n" + logTail);
-            }
-        }
 
         // ------------------------------------------------------------------------ close -----
         LinearLayout closeRow = newRow();
@@ -560,7 +507,7 @@ public final class MioMenuActivity extends Activity {
         return row;
     }
 
-    private void addButton(@NonNull LinearLayout row, @NonNull String text, @NonNull View.OnClickListener listener) {
+    private Button addButton(@NonNull LinearLayout row, @NonNull String text, @NonNull View.OnClickListener listener) {
         Button button = new Button(this);
         button.setText(text);
         button.setTextSize(12);
@@ -572,6 +519,7 @@ public final class MioMenuActivity extends Activity {
             ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         params.setMargins(dp(3), 0, dp(3), 0);
         row.addView(button, params);
+        return button;
     }
 
     private int dp(float value) {
@@ -706,22 +654,26 @@ public final class MioMenuActivity extends Activity {
     private static final String MIO_CODE_SERVER_DEB_URL =
         "https://github.com/Mio-129/tm-pkg/releases/download/vq/code-server.deb";
 
-    /** Show the "Mio Paket" list (e.g. Code Server) and install the chosen item in Termux. */
+    private static final String MIO_OLDER_PACK_URL =
+        "https://raw.githubusercontent.com/Mio-129/tm-pkg/refs/heads/main/older-pack";
+
+    /** Show the "Mio Paketler" list (e.g. Code Server) and install the chosen item in Termux. */
     private void showMioPackageStoreDialog() {
         final String[] items = new String[]{
             "Code Server"
         };
 
         new AlertDialog.Builder(this)
-            .setTitle("Mio Paket")
+            .setTitle("Mio Paketler")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) {
                     String cmd = "mkdir -p ~/.mio/tmp && cd ~/.mio/tmp"
-                        + " && (if command -v curl >/dev/null 2>&1; then curl -fL --progress-bar -o ./code-server.deb "
+                        + " && (dpkg-query -W -f='${Status}' code-server 2>/dev/null | grep -q 'install ok installed'"
+                        + " || ((if command -v curl >/dev/null 2>&1; then curl -fL --progress-bar -o ./code-server.deb "
                         + MioPackages.quote(MIO_CODE_SERVER_DEB_URL)
                         + "; else wget -O ./code-server.deb " + MioPackages.quote(MIO_CODE_SERVER_DEB_URL) + "; fi)"
                         + " && apt install -y ./code-server.deb"
-                        + " && rm -f ./code-server.deb"
+                        + " && rm -f ./code-server.deb))"
                         + " && (command -v grun >/dev/null 2>&1 || ("
                         + "(ls \"$PREFIX/var/lib/apt/lists/\"*Packages* >/dev/null 2>&1 || apt update)"
                         + " && apt install -y glibc-repo && apt update && apt install -y glibc-runner))"
@@ -730,6 +682,49 @@ public final class MioMenuActivity extends Activity {
                         + " fi"
                         + " && echo 'Code Server kuruldu! Baslatmak icin: code-server'";
                     runCommand(cmd);
+                }
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    @Nullable
+    private MioPackages.Package findPackageByName(@NonNull String name) {
+        for (MioPackages.Package pkg : MioPackages.getPackages()) {
+            if (name.equalsIgnoreCase(pkg.name)) return pkg;
+        }
+        return null;
+    }
+
+    private void runOlderPack() {
+        MioPackages.Package pkg = findPackageByName("Older-Pack");
+        String url = pkg != null ? pkg.getRemoteUrl() : null;
+        if (url == null || url.trim().isEmpty()) {
+            url = MIO_OLDER_PACK_URL;
+        }
+        if (pkg != null) {
+            pkg.setInstalledVersion(pkg.getVersion() == null ? "1" : pkg.getVersion());
+        }
+        String quoted = MioPackages.quote(url);
+        String cmd = "bash <(if command -v curl >/dev/null 2>&1; then curl -s " + quoted
+            + "; else wget -qO- " + quoted + "; fi)";
+        runCommand(cmd);
+    }
+
+    private void showOlderPackOptionsDialog() {
+        MioPackages.Package pkg = findPackageByName("Older-Pack");
+        final String[] items = pkg == null
+            ? new String[]{"Terminalde çalıştır"}
+            : new String[]{"Terminalde çalıştır", "Günlük", "Düzenle", "Klasör"};
+        new AlertDialog.Builder(this)
+            .setTitle("Older-Pack")
+            .setItems(items, (dialog, which) -> {
+                if (which == 0) {
+                    runOlderPack();
+                } else if (pkg != null) {
+                    if (which == 1) showPackageLog(pkg);
+                    else if (which == 2) showPackageEditor(pkg);
+                    else if (which == 3) showPackageFolder(pkg);
                 }
             })
             .setNegativeButton(android.R.string.cancel, null)

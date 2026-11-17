@@ -1009,6 +1009,14 @@ mio_patch_elf() {
     [ "$(printf '%s' "$_pe_new" | wc -c | tr -d ' ')" = "21" ] || return 1
 
     [ -w "$_pe_f" ] || chmod u+w "$_pe_f" 2>/dev/null
+    _pe_native="${PREFIX:-/data/data/com.mio/files/usr}/libexec/mio/mio-elfpatch"
+    if [ -x "$_pe_native" ] && "$_pe_native" "$_pe_f" 2>/dev/null; then
+        if ! grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+            chmod 755 "$_pe_f" 2>/dev/null
+            return 0
+        fi
+    fi
+
     _pe_before=$(wc -c < "$_pe_f" 2>/dev/null | tr -d ' ')
     _pe_tmp="$_pe_f.mio-elf"
     rm -f "$_pe_tmp" 2>/dev/null
@@ -2355,7 +2363,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 45 (menü, ses, paketler, mio apt/pkg/install, Debian/FHS+arm64, bayt ELF yaması, hızlı deb-cevir, sessiz bootstrap, .hushlogin)\n'
+    printf 'mio sürüm: 46 (menü, ses, paketler, mio apt/pkg/install, NDK ELF yama, Debian/FHS+arm64, hızlı deb-cevir, sessiz bootstrap)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2822,7 +2830,7 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 45 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 46 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     resolve-deps)

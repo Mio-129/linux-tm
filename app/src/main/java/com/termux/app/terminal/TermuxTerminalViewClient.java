@@ -66,14 +66,15 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     boolean mVirtualControlKeyDown, mVirtualFnKeyDown;
 
     /**
-     * The volume up key opens the Mio menu of this fork on a short press and still acts as the Fn
-     * key on a long press, which is the behaviour of the side menu of ZeroTermux where the menu is
-     * one gesture away. Set with the `volume-up-opens-mio-menu` property, see {@link MioTextStyle}.
+     * Holding the volume up key opens the Mio menu of this fork directly, so the menu can always
+     * be reached even while a package installation is running and commands cannot be typed.
      */
-    private static final long VOLUME_UP_LONG_PRESS_MS = 500;
+    private static final long VOLUME_UP_LONG_PRESS_MS = 450;
 
     /** When the volume up key was pressed down, {@code 0} if it is not pressed. */
     private long mVolumeUpDownTime;
+    private boolean mVolumeUpLongPressTriggered;
+    private final Runnable mVolumeUpLongPressRunnable = this::openMioMenuIfVolumeUpHeld;
 
     private Runnable mShowSoftKeyboardRunnable;
 
@@ -321,8 +322,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             return false;
         }
 
-        // A short press on the volume up key opens the Mio menu, even if the volume keys were set
-        // to change the media volume, in which case the volume is changed as well
+        // Holding the volume up key opens the Mio menu even when volume keys are set to media mode
         boolean virtualKeysDisabled = mActivity.getProperties().areVirtualVolumeKeysDisabled();
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && MioTextStyle.isMioMenuOnVolumeUp(mActivity)) {
             return handleVolumeUpKey(event, down, !virtualKeysDisabled);
@@ -340,50 +340,68 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         return false;
     }
 
+    /** Fallback for {@link TermuxActivity} when another view besides the terminal has focus. */
+    public boolean handleVolumeUpFallback(int keyCode, KeyEvent event, boolean down) {
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP || !MioTextStyle.isMioMenuOnVolumeUp(mActivity)) {
+            return false;
+        }
+        InputDevice inputDevice = event.getDevice();
+        if (inputDevice != null && inputDevice.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
+            return false;
+        }
+        boolean virtualKeysDisabled = mActivity.getProperties().areVirtualVolumeKeysDisabled();
+        return handleVolumeUpKey(event, down, !virtualKeysDisabled);
+    }
+
     /**
      * Handle the volume up key of the device.
      *
-     * The key is used as the Fn key of the terminal on a long press, which is the standard Termux
-     * behaviour, and opens the Mio menu on a short press. The Fn state is only enabled when the key
-     * is held long enough, so that a short press does not leave the terminal in a mode where the
-     * next characters are turned into escape sequences.
-     *
-     * @param allowFn If the key may also act as the Fn key, which is not the case when the volume
-     *                keys are used to change the media volume.
+     * Holding the key opens the Mio menu immediately after {@link #VOLUME_UP_LONG_PRESS_MS} so
+     * that it can always be reached even while a package installation is running. A short tap
+     * still raises media volume when volume keys are in media mode.
      */
     private boolean handleVolumeUpKey(KeyEvent event, boolean down, boolean allowFn) {
+        View anchor = mActivity.getTerminalView();
+        if (anchor == null && mActivity.getWindow() != null) {
+            anchor = mActivity.getWindow().getDecorView();
+        }
+
         if (!down) {
-            long duration = mVolumeUpDownTime == 0 ? 0 : SystemClock.uptimeMillis() - mVolumeUpDownTime;
+            if (anchor != null) anchor.removeCallbacks(mVolumeUpLongPressRunnable);
+            boolean triggered = mVolumeUpLongPressTriggered;
+            boolean hadPress = mVolumeUpDownTime != 0 || triggered;
             mVolumeUpDownTime = 0;
+            mVolumeUpLongPressTriggered = false;
             mVirtualFnKeyDown = false;
 
-            if (duration > 0 && duration < VOLUME_UP_LONG_PRESS_MS) {
-                MioMenu.show(mActivity);
-                // The key still changes the media volume if the volume keys were set up that way
-                if (!allowFn) raiseMediaVolume();
+            if (hadPress && !triggered && !allowFn) {
+                raiseMediaVolume();
             }
             return true;
         }
 
         if (event.getRepeatCount() == 0) {
             mVolumeUpDownTime = SystemClock.uptimeMillis();
+            mVolumeUpLongPressTriggered = false;
             mVirtualFnKeyDown = false;
-            // Enable the Fn state only if the key is still held after the long press delay
-            if (allowFn) {
-                View terminalView = mActivity.getTerminalView();
-                if (terminalView != null) {
-                    terminalView.postDelayed(this::enableFnKeyIfStillHeld, VOLUME_UP_LONG_PRESS_MS);
-                }
+            if (anchor != null) {
+                anchor.removeCallbacks(mVolumeUpLongPressRunnable);
+                anchor.postDelayed(mVolumeUpLongPressRunnable, VOLUME_UP_LONG_PRESS_MS);
             }
         }
         return true;
     }
 
-    private void enableFnKeyIfStillHeld() {
-        if (mVolumeUpDownTime != 0) mVirtualFnKeyDown = true;
+    private void openMioMenuIfVolumeUpHeld() {
+        if (mVolumeUpDownTime != 0 && !mVolumeUpLongPressTriggered) {
+            mVolumeUpLongPressTriggered = true;
+            mVolumeUpDownTime = 0;
+            mVirtualFnKeyDown = false;
+            MioMenu.show(mActivity);
+        }
     }
 
-    /** Raise the media volume, used when the volume up key opens the menu on a short press. */
+    /** Raise the media volume when the user performs a short tap on volume up in media mode. */
     private void raiseMediaVolume() {
         try {
             AudioManager audioManager = (AudioManager) mActivity.getSystemService(Context.AUDIO_SERVICE);

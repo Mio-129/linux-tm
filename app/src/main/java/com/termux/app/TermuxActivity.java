@@ -15,6 +15,7 @@ import android.os.IBinder;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -708,6 +709,24 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
 
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (mTermuxTerminalViewClient != null
+            && mTermuxTerminalViewClient.handleVolumeUpFallback(keyCode, event, true)) {
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (mTermuxTerminalViewClient != null
+            && mTermuxTerminalViewClient.handleVolumeUpFallback(keyCode, event, false)) {
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
 
     @SuppressLint("RtlHardcoded")
     @Override
