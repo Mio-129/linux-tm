@@ -64,6 +64,7 @@ public final class MioBootstrap {
         repairAptMethods();
         repairAptState();
         repairAptConfigFile();
+        ensureHushLoginOnce();
 
         File binDir = TermuxConstants.TERMUX_BIN_PREFIX_DIR;
         if (!binDir.isDirectory()) {
@@ -626,6 +627,8 @@ public final class MioBootstrap {
         File confDir = new File(aptDir, "apt.conf.d");
         if (!confDir.isDirectory()) return false;
         String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+        File protectedDpkg = new File(prefix, "libexec/mio/dpkg");
+        String dpkgPath = protectedDpkg.isFile() ? protectedDpkg.getAbsolutePath() : (prefix + "/bin/dpkg");
         String content = "# mio: apt paths (APT_CONFIG)\n" +
             "Dir::Etc \"" + aptDir.getAbsolutePath() + "\";\n" +
             "Dir::Etc::sourcelist \"" + new File(aptDir, "sources.list").getAbsolutePath() + "\";\n" +
@@ -639,14 +642,46 @@ public final class MioBootstrap {
             "Dir::Cache::archives \"" + prefix + "/var/cache/apt/archives\";\n" +
             "Dir::Log \"" + prefix + "/var/log/apt\";\n" +
             "Dir::Bin::methods \"" + prefix + "/lib/apt/methods\";\n" +
+            "Dir::Bin::dpkg \"" + dpkgPath + "\";\n" +
             "Dir::State::extended_states \"" + prefix + "/var/lib/apt/extended_states\";\n" +
-            "DPkg::Path \"" + prefix + "/bin:/system/bin:/system/xbin\";\n" +
+            "DPkg::Path \"" + prefix + "/libexec/mio:" + prefix + "/bin:/system/bin:/system/xbin\";\n" +
+            "Dpkg::Options { \"--force-confdef\"; \"--force-confold\"; };\n" +
+            "DPkg::Post-Invoke { \"" + prefix + "/bin/mio sarmalayici >/dev/null 2>&1 || true\"; };\n" +
             "Acquire::ForceIPv4 \"true\";\n" +
             "Acquire::Languages \"none\";\n";
         File conf = new File(confDir, "mio-apt.conf");
         String current = conf.isFile() ? readText(conf) : null;
         if (content.equals(current)) return false;
         return writeText(conf, content);
+    }
+
+    /**
+     * Suppress the default Termux welcome/MOTD banner once so opening the terminal lands directly
+     * on the prompt without the initial bootstrap/motd wall of text.
+     */
+    private static void ensureHushLoginOnce() {
+        File marker = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/.mio-hushlogin-done");
+        if (marker.isFile()) return;
+        try {
+            File homeDir = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
+            //noinspection ResultOfMethodCallIgnored
+            homeDir.mkdirs();
+            File hush = new File(homeDir, ".hushlogin");
+            if (!hush.exists()) {
+                writeBytes(hush, new byte[0]);
+            }
+            for (String rel : new String[]{"etc/motd", "etc/motd-playstore"}) {
+                File motd = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, rel);
+                if (motd.isFile() && motd.length() > 0) {
+                    writeBytes(motd, new byte[0]);
+                }
+            }
+            if (marker.getParentFile() != null && marker.getParentFile().isDirectory()) {
+                writeBytes(marker, new byte[]{'1', '\n'});
+            }
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to ensure .hushlogin: " + e.getMessage());
+        }
     }
 
     /**

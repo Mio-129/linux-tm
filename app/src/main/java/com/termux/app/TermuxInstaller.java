@@ -277,6 +277,12 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
+                    // Run the bootstrap second stage (postinst scripts) silently during the installer
+                    // progress dialog and suppress the default Termux welcome/MOTD screen so the user
+                    // lands directly on a clean shell prompt.
+                    runBootstrapSecondStageSilently();
+                    suppressBootstrapWelcomeScreen();
+
                     // Install the custom `swset` and `so` commands since the prefix was wiped earlier
                     com.termux.app.mio.MioBootstrap.install(activity);
 
@@ -307,6 +313,91 @@ final class TermuxInstaller {
         patchLegacyPaths(TERMUX_PREFIX_DIR);
         // `$HOME` and `~/.termux` of the second stage script of the bootstrap
         patchLegacyPaths(TermuxConstants.TERMUX_FILES_DIR);
+    }
+
+    /**
+     * Execute the Termux bootstrap second stage script during the installer progress dialog so that
+     * all postinst maintainer scripts complete silently before the first terminal session opens.
+     */
+    private static void runBootstrapSecondStageSilently() {
+        File sh = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "sh");
+        if (!sh.isFile()) return;
+
+        File script = null;
+        for (String rel : new String[]{
+            "etc/termux/termux-bootstrap/second-stage/termux-bootstrap-second-stage.sh",
+            "etc/termux/bootstrap/termux-bootstrap-second-stage.sh"
+        }) {
+            File candidate = new File(TERMUX_PREFIX_DIR_PATH, rel);
+            if (candidate.isFile()) {
+                script = candidate;
+                break;
+            }
+        }
+        if (script == null) return;
+
+        //noinspection ResultOfMethodCallIgnored
+        script.setExecutable(true, false);
+        File tmpDir = new File(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+        //noinspection ResultOfMethodCallIgnored
+        tmpDir.mkdirs();
+        File homeDir = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
+        //noinspection ResultOfMethodCallIgnored
+        homeDir.mkdirs();
+
+        Process process = null;
+        try {
+            Logger.logInfo(LOG_TAG, "Running bootstrap second stage silently: \"" + script.getAbsolutePath() + "\"");
+            ProcessBuilder builder = new ProcessBuilder(sh.getAbsolutePath(), script.getAbsolutePath());
+            builder.redirectErrorStream(true);
+            builder.redirectOutput(new File(tmpDir, "bootstrap-second-stage.log"));
+            builder.environment().put("PREFIX", TERMUX_PREFIX_DIR_PATH);
+            builder.environment().put("HOME", homeDir.getAbsolutePath());
+            builder.environment().put("TMPDIR", tmpDir.getAbsolutePath());
+            builder.environment().put("DEBIAN_FRONTEND", "noninteractive");
+            builder.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":"
+                + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets:/system/bin:/system/xbin");
+            process = builder.start();
+            boolean finished = process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                Logger.logWarn(LOG_TAG, "Bootstrap second stage timed out after 60s");
+                process.destroy();
+            } else {
+                Logger.logInfo(LOG_TAG, "Bootstrap second stage completed silently with exit code " + process.exitValue());
+            }
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to run bootstrap second stage silently: " + e.getMessage());
+        } finally {
+            if (process != null) process.destroy();
+        }
+    }
+
+    /**
+     * Suppress the default Termux welcome/MOTD banner on first launch by creating `~/.hushlogin`
+     * and clearing the default `etc/motd*` files.
+     */
+    private static void suppressBootstrapWelcomeScreen() {
+        try {
+            File homeDir = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
+            //noinspection ResultOfMethodCallIgnored
+            homeDir.mkdirs();
+            File hushLogin = new File(homeDir, ".hushlogin");
+            if (!hushLogin.exists()) {
+                try (FileOutputStream out = new FileOutputStream(hushLogin)) {
+                    // empty file is sufficient for Termux `login`
+                }
+            }
+            for (String rel : new String[]{"etc/motd", "etc/motd-playstore"}) {
+                File motd = new File(TERMUX_PREFIX_DIR_PATH, rel);
+                if (motd.isFile() && motd.length() > 0) {
+                    try (FileOutputStream out = new FileOutputStream(motd)) {
+                        // truncate default welcome banner
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to suppress welcome banner: " + e.getMessage());
+        }
     }
 
     /**

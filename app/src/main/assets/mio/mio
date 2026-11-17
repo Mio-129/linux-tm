@@ -76,6 +76,8 @@ Kullanım: mio [komut]
   mio apt [komut...]      apt çalıştırır (ör: mio apt install sl; argümansız: apt durumu)
   mio pkg [komut...]      pkg çalıştırır (ör: mio pkg install sl)
   mio install <paket>     Hem apt hem pkg'de arar; ikisinde de varsa sorar (1 apt, 2 pkg)
+  mio deps-upgrade        Depodaki tüm güncel kütüphane bağımlılıklarını yükseltir
+  mio elf-fix             Kurulu .so / ELF kütüphanelerini com.mio yollarına yamar
   mio sarmalayici         apt/dpkg sarmalayıcılarını tazeler (uygulama her açılışta çağırır)
   mio deb-cevir <deb>     .deb içindeki com.termux yollarını com.mio yapar
   mio deb-cevir -t <deb>  Paketin neden çevrilemediğini söyler (hiçbir şeyi değiştirmez)
@@ -195,6 +197,8 @@ ensure_apt_config() {
 
     # 5) `pkg` kendi argüman ayrıştırıcısını kullandığı için `-o` geçemiyor; aynı yollar APT_CONFIG
     #    ile dayatılır (apt bu dosyayı her çağrıda okur)
+    _dpkg_bin="$PREFIX/bin/dpkg"
+    [ -x "$PREFIX/libexec/mio/dpkg" ] && _dpkg_bin="$PREFIX/libexec/mio/dpkg"
     apc="$conf_dir/mio-apt.conf"
     {
         printf '# mio: apt yolları (APT_CONFIG)\n'
@@ -210,8 +214,11 @@ ensure_apt_config() {
         printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$PREFIX"
         printf 'Dir::Log "%s/var/log/apt";\n' "$PREFIX"
         printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$PREFIX"
+        printf 'Dir::Bin::dpkg "%s";\n' "$_dpkg_bin"
         printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$PREFIX"
-        printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$PREFIX"
+        printf 'DPkg::Path "%s/libexec/mio:%s/bin:/system/bin:/system/xbin";\n' "$PREFIX" "$PREFIX"
+        printf 'Dpkg::Options { "--force-confdef"; "--force-confold"; };\n'
+        printf 'DPkg::Post-Invoke { "%s/bin/mio sarmalayici >/dev/null 2>&1 || true"; };\n' "$PREFIX"
         printf 'Acquire::ForceIPv4 "true";\n'
         printf 'Acquire::Languages "none";\n'
     } > "$apc.tmp" 2>/dev/null
@@ -591,19 +598,17 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=27" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=28" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
-    # Gerçek aracı bir kez sakla (sarmalayıcı kendini çağırmasın)
-    if [ ! -f "$real" ]; then
-        if grep -q "MIO_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
-            # Daha önce sarmalanmış ama gerçek araç kaybolmuş: kurtarılamaz
-            printf 'mio: %s.mio-real yok, sarmalayıcı kurulmadı\n' "$name" >&2
-            return 1
-        fi
+    # Gerçek aracı sakla (paket yükseltmesi $wrapper'ı ezmişse .mio-real'i de güncelle)
+    if [ -f "$wrapper" ] && ! grep -q "MIO_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
         cp "$wrapper" "$real" 2>/dev/null || return 1
         chmod 755 "$real" 2>/dev/null
+    elif [ ! -f "$real" ]; then
+        printf 'mio: %s.mio-real yok, sarmalayıcı kurulmadı\n' "$name" >&2
+        return 1
     fi
     [ -x "$real" ] || return 1
 
@@ -611,7 +616,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=27
+MIO_WRAPPER_VERSION=28
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -725,6 +730,17 @@ for d in "$prefix/var/lib/apt/lists/partial" "$prefix/var/cache/apt/archives/par
 done
 touch "$prefix/var/lib/dpkg/status" 2>/dev/null
 
+# en son) `apt install` sırasında dpkg sarmalayıcısı eski kalmasın: korumalı
+#     `$prefix/libexec/mio/dpkg` ve `$prefix/bin/dpkg` yoksa tazele.
+if [ -x "$prefix/bin/mio" ]; then
+    if [ ! -x "$prefix/libexec/mio/dpkg" ] || ! grep -q "MIO_DPKG_WRAPPER_VERSION=" "$prefix/bin/dpkg" 2>/dev/null; then
+        "$prefix/bin/mio" dpkg-sarmala >/dev/null 2>&1 || :
+    fi
+fi
+
+_dpkg_bin="$prefix/bin/dpkg"
+[ -x "$prefix/libexec/mio/dpkg" ] && _dpkg_bin="$prefix/libexec/mio/dpkg"
+
 # 7) Yolları APT_CONFIG ile dayat: bu dosya apt'nin kendisi tarafından okunur ve `pkg` gibi
 #    sarmalayıcılar `-o` geçirmese de geçerli olur.
 export APT_CONFIG="$conf_dir/mio-apt.conf"
@@ -742,18 +758,16 @@ export APT_CONFIG="$conf_dir/mio-apt.conf"
     printf 'Dir::Cache::archives "%s/var/cache/apt/archives";\n' "$prefix"
     printf 'Dir::Log "%s/var/log/apt";\n' "$prefix"
     printf 'Dir::Bin::methods "%s/lib/apt/methods";\n' "$prefix"
+    printf 'Dir::Bin::dpkg "%s";\n' "$_dpkg_bin"
     printf 'Dir::State::extended_states "%s/var/lib/apt/extended_states";\n' "$prefix"
-    printf 'DPkg::Path "%s/bin:/system/bin:/system/xbin";\n' "$prefix"
+    printf 'DPkg::Path "%s/libexec/mio:%s/bin:/system/bin:/system/xbin";\n' "$prefix" "$prefix"
+    printf 'Dpkg::Options { "--force-confdef"; "--force-confold"; };\n'
+    printf 'DPkg::Post-Invoke { "%s/bin/mio sarmalayici >/dev/null 2>&1 || true"; };\n' "$prefix"
     printf 'Acquire::ForceIPv4 "true";\n'
     printf 'Acquire::Languages "none";\n'
 } > "$APT_CONFIG" 2>/dev/null
 
-# 8) Tüm apt kök yollarını dayat. Bu apt yapısında `Dir` öneğe ayarlı olmadığı için göreli
-#    varsayılanlar kök dosya sistemine çözülüyor ("E: List directory .../var/lib/apt is missing"),
-#    sourcelist/sourceparts da okunmadığı için "The list of sources could not be read" çıkıyor.
-#    Önek yolu boşluk içermez, bu yüzden seçenekler tek bir değişkende toplanabilir.
-#    NOT: `Dir` kökü bilerek ayarlanmaz; bu apt sürümünde `Dir` verilince mutlak bir
-#    `Dir::Bin::methods` bile göreli hale geliyor ve yöntemler başlatılamıyor.
+# 8) Tüm apt kök yollarını dayat.
 apt_opts="-o Dir::Etc=$prefix/etc/apt"
 apt_opts="$apt_opts -o Dir::Etc::sourcelist=$sources -o Dir::Etc::sourceparts=$parts"
 apt_opts="$apt_opts -o Dir::Etc::trusted=$prefix/etc/apt/trusted.gpg"
@@ -763,29 +777,14 @@ apt_opts="$apt_opts -o Dir::State::status=$prefix/var/lib/dpkg/status"
 apt_opts="$apt_opts -o Dir::Cache=$prefix/var/cache/apt"
 apt_opts="$apt_opts -o Dir::Cache::archives=$prefix/var/cache/apt/archives"
 apt_opts="$apt_opts -o Dir::Log=$prefix/var/log/apt"
-# apt, indirme yöntemlerini `Dir::Bin::methods` altında arar; bu değer mutlak değilse
-# `Dir` köküyle birleşip var olmayan bir yola dönüşür ("Method ... did not start correctly")
 apt_opts="$apt_opts -o Dir::Bin::methods=$prefix/lib/apt/methods"
 apt_opts="$apt_opts -o Dir::State::extended_states=$prefix/var/lib/apt/extended_states"
-apt_opts="$apt_opts -o Dir::Bin::dpkg=$prefix/bin/dpkg"
-# dpkg, yardımcı programlarını (sh, rm, tar, diff, dpkg-deb) `DPkg::Path` içinde arar; apt bu değeri
-# boş bulursa çocuk sürece kendi PATH'ini veriyor ve "N expected programs not found in PATH" çıkıyor.
-apt_opts="$apt_opts -o DPkg::Path=$prefix/bin:/system/bin:/system/xbin"
-# Hız: IPv4 zorla (IPv6 Türkiye'de sık sık takılıyor), çeviri dosyalarını indirme, 3 kez dene
+apt_opts="$apt_opts -o Dir::Bin::dpkg=$_dpkg_bin"
+apt_opts="$apt_opts -o DPkg::Path=$prefix/libexec/mio:$prefix/bin:/system/bin:/system/xbin"
 apt_opts="$apt_opts -o Acquire::ForceIPv4=true -o Acquire::Languages=none"
 apt_opts="$apt_opts -o Acquire::Retries=3 -o Acquire::http::Pipeline-Depth=0"
 arch=$(dpkg --print-architecture 2>/dev/null)
 [ -n "$arch" ] && apt_opts="$apt_opts -o APT::Architecture=$arch"
-
-# en son) `apt install` sırasında dpkg sarmalayıcısı eski kalmasın: bu sarmalayıcı, `mio apt-fix`
-#     çalıştırılmadan da güncel dpkg sarmalayıcısını yerine koyar (tek eksik parça buydu: eski
-#     sarmalayıcı dönüşüm hatasını yutuyor ve dpkg orijinal com.termux paketiyle çıkış kodu 1
-#     veriyordu). Kurulum başarısız olursa apt normal akışına devam eder, engellenmez.
-if [ -x "$prefix/bin/mio" ]; then
-    if ! grep -q "MIO_DPKG_WRAPPER_VERSION=" "$prefix/bin/dpkg" 2>/dev/null; then
-        "$prefix/bin/mio" dpkg-sarmala >/dev/null 2>&1 || :
-    fi
-fi
 
 if [ "$NAME" = "pkg" ]; then
     # `pkg` kendi argüman ayrıştırıcısını kullanır, `-o` kabul etmez; ama `apt`/`apt-get`'i PATH'ten
@@ -802,14 +801,41 @@ if [ -n "${LD_PRELOAD:-}" ]; then
     MIO_LD_PRELOAD="$LD_PRELOAD"
     unset LD_PRELOAD
 fi
-# dpkg, paket betiklerini ve yardımcı programları PATH'te arar; önek her zaman başta olsun
+# dpkg, paket betiklerini ve yardımcı programları PATH'te arar; korumalı sarmalayıcı + önek başta olsun
 case ":$PATH:" in
     *":$prefix/bin:"*) ;;
     *) PATH="$prefix/bin:$PATH" ;;
 esac
+case ":$PATH:" in
+    *":$prefix/libexec/mio:"*) ;;
+    *) PATH="$prefix/libexec/mio:$PATH" ;;
+esac
 export PATH
+
+# 10) Sürüm 28: Termux bootstrap'ı eski kaldığı için yalnız `curl` gibi tek bir paketi kurmak
+#     `libngtcp2` / `libnghttp3` / `openssl` / `libandroid-support` gibi bağımlı kütüphaneleri
+#     yükseltmiyor ve `cannot locate symbol` hatasına yol açıyor. `install` sırasında
+#     ilgili tüm eski bağımlılıklar da aynı işleme eklenir.
+extra_deps=""
+if [ "${MIO_NO_DEP_UPGRADE:-0}" != "1" ] && [ -x "$prefix/bin/mio" ]; then
+    _is_inst=0
+    _skip_dep=0
+    _pkgs=""
+    for _a in "$@"; do
+        case "$_a" in
+            install) _is_inst=1 ;;
+            -s|--simulate|--just-print|--dry-run|-d|--download-only|--print-uris) _skip_dep=1 ;;
+            -*|*.deb|/*) ;;
+            *) [ "$_is_inst" -eq 1 ] && _pkgs="$_pkgs ${_a%%[=/:]*}" ;;
+        esac
+    done
+    if [ "$_is_inst" -eq 1 ] && [ "$_skip_dep" -eq 0 ] && [ -n "$_pkgs" ]; then
+        extra_deps=$(MIO_NO_DEP_UPGRADE=1 "$prefix/bin/mio" resolve-deps $_pkgs 2>/dev/null || true)
+    fi
+fi
+
 # shellcheck disable=SC2086
-exec "$bin/$NAME.mio-real" $apt_opts "$@"
+exec "$bin/$NAME.mio-real" $apt_opts "$@" $extra_deps
 MIO_EOF
     sed -e "s|@@NAME@@|$name|g" -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
     chmod 755 "$wrapper" 2>/dev/null
@@ -1552,19 +1578,22 @@ install_dpkg_wrapper() {
     [ -d "$PREFIX/bin" ] || return 0
     real="$PREFIX/bin/dpkg.mio-real"
     wrapper="$PREFIX/bin/dpkg"
+    prot_dir="$PREFIX/libexec/mio"
+    prot="$prot_dir/dpkg"
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
-    # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=15" "$wrapper" 2>/dev/null; then
+    # Sarmalayıcı hem $PREFIX/bin/dpkg hem korumalı $PREFIX/libexec/mio/dpkg olarak güncelse dokunma
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=16" "$wrapper" 2>/dev/null && \
+       grep -q "MIO_DPKG_WRAPPER_VERSION=16" "$prot" 2>/dev/null; then
         return 0
     fi
 
-    if [ ! -f "$real" ]; then
-        if grep -q "MIO_DPKG_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
-            return 0
-        fi
+    if [ -f "$wrapper" ] && ! grep -q "MIO_DPKG_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
         cp "$wrapper" "$real" 2>/dev/null || return 1
         chmod 755 "$real" 2>/dev/null
+    elif [ ! -f "$real" ]; then
+        printf 'mio: %s yok, sarmalayıcı kurulmadı\n' "$real" >&2
+        return 1
     fi
     [ -x "$real" ] || return 1
 
@@ -1572,25 +1601,22 @@ install_dpkg_wrapper() {
 #!@@PREFIX@@/bin/sh
 # mio dpkg sarmalayıcısı: com.termux yollu .deb dosyalarını com.mio için yeniden paketler.
 # Dönüştürme mantığı bu dosyada kopya tutulmaz; `mio` betiğine devredilir (tek kaynak).
-#
-# Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
-# yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
-# ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=15
-bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
-case "$bin" in
-    ""|/) bin=@@PREFIX@@/bin ;;
-esac
-prefix=$(dirname "$bin")
+MIO_DPKG_WRAPPER_VERSION=16
+prefix=@@PREFIX@@
+bin="$prefix/bin"
 real="$bin/dpkg.mio-real"
 mio="$bin/mio"
 failed=0
 
-# dpkg yardımcı programlarını (ldconfig, start-stop-daemon, sh, tar, ...) önekte arar; eksikse
-# "N expected programs not found in PATH" deyip unpack etmeden durur.
+# dpkg yardımcı programlarını (ldconfig, start-stop-daemon, sh, tar, dpkg-deb) korumalı dizin +
+# önekte arar; eksikse "N expected programs not found in PATH" deyip unpack etmeden durur.
 case ":$PATH:" in
     *":$bin:"*) : ;;
     *) PATH="$bin:$PATH" ; export PATH ;;
+esac
+case ":$PATH:" in
+    *":$prefix/libexec/mio:"*) : ;;
+    *) PATH="$prefix/libexec/mio:$PATH" ; export PATH ;;
 esac
 
 if [ ! -x "$real" ]; then
@@ -1654,6 +1680,8 @@ exec "$real" "$@"
 MIO_EOF
     sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
     chmod 755 "$wrapper" 2>/dev/null
+    mkdir -p "$prot_dir" 2>/dev/null
+    cp "$wrapper" "$prot" 2>/dev/null && chmod 755 "$prot" 2>/dev/null
     printf 'mio: dpkg sarmalayıcısı kuruldu\n'
 }
 
@@ -1668,30 +1696,29 @@ install_dpkg_deb_wrapper() {
     [ -d "$PREFIX/bin" ] || return 0
     real="$PREFIX/bin/dpkg-deb.mio-real"
     wrapper="$PREFIX/bin/dpkg-deb"
+    prot_dir="$PREFIX/libexec/mio"
+    prot="$prot_dir/dpkg-deb"
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
-    if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=2" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=3" "$wrapper" 2>/dev/null && \
+       grep -q "MIO_DPKG_DEB_WRAPPER_VERSION=3" "$prot" 2>/dev/null; then
         return 0
     fi
 
-    if [ ! -f "$real" ]; then
-        if grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
-            return 0
-        fi
+    if [ -f "$wrapper" ] && ! grep -q "MIO_DPKG_DEB_WRAPPER_VERSION" "$wrapper" 2>/dev/null; then
         cp "$wrapper" "$real" 2>/dev/null || return 1
         chmod 755 "$real" 2>/dev/null
+    elif [ ! -f "$real" ]; then
+        return 1
     fi
     [ -x "$real" ] || return 1
 
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio dpkg-deb sarmalayıcısı: .deb içindeki com.termux yollarını com.mio yapar.
-MIO_DPKG_DEB_WRAPPER_VERSION=2
-bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
-case "$bin" in
-    ""|/) bin=@@PREFIX@@/bin ;;
-esac
-prefix=$(dirname "$bin")
+MIO_DPKG_DEB_WRAPPER_VERSION=3
+prefix=@@PREFIX@@
+bin="$prefix/bin"
 real="$bin/dpkg-deb.mio-real"
 mio="$bin/mio"
 
@@ -1737,6 +1764,8 @@ exec "$real" "$@"
 MIO_EOF
     sed -e "s|@@PREFIX@@|$PREFIX|g" "$wrapper" > "$wrapper.tmp" 2>/dev/null && mv "$wrapper.tmp" "$wrapper"
     chmod 755 "$wrapper" 2>/dev/null
+    mkdir -p "$prot_dir" 2>/dev/null
+    cp "$wrapper" "$prot" 2>/dev/null && chmod 755 "$prot" 2>/dev/null
     return 0
 }
 
@@ -1926,6 +1955,69 @@ mio_pkg_has_pkg() {
             "$PREFIX/bin/pkg" show "$_p" </dev/null 2>/dev/null | grep -q '^Package: '; then
             return 0
         fi
+    fi
+    return 1
+}
+
+# Kurulacak paket(ler)in özyineli bağımlılıklarından (örn. curl -> libcurl -> libngtcp2,
+# libnghttp3, openssl) bootstrap'ta eski sürümde kalmış olanları bulur; böylece
+# `pkg install curl` sonrası "cannot locate symbol" hatası yaşanmaz.
+mio_resolve_install_deps() {
+    [ $# -gt 0 ] || return 0
+    _ag=""
+    if [ -x "$PREFIX/bin/apt-get.mio-real" ]; then
+        _ag="$PREFIX/bin/apt-get.mio-real"
+    elif [ -x "$PREFIX/bin/apt-get" ]; then
+        _ag="$PREFIX/bin/apt-get"
+    else
+        return 0
+    fi
+    _ac=""
+    [ -x "$PREFIX/bin/apt-cache" ] && _ac="$PREFIX/bin/apt-cache"
+    [ -n "$_ac" ] || return 0
+
+    _conf="$PREFIX/etc/apt/apt.conf.d/mio-apt.conf"
+    [ -f "$_conf" ] || return 0
+
+    _upg=$(env -u LD_PRELOAD APT_CONFIG="$_conf" "$_ag" -s -o Debug::NoLocking=1 upgrade </dev/null 2>/dev/null | awk '/^Inst / { print $2 }' | tr '\n' ' ')
+    [ -n "$_upg" ] || return 0
+
+    _deps=$(env -u LD_PRELOAD APT_CONFIG="$_conf" "$_ac" depends --recurse \
+        --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances \
+        "$@" </dev/null 2>/dev/null | awk '
+        /^[[:space:]]+/ {
+            line = $0
+            sub(/^[[:space:]]*\|?(Pre)?Depends:[[:space:]]*/, "", line)
+            gsub(/[<>]/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line != "" && line !~ /[[:space:]]/) print line
+        }
+    ' | sort -u)
+    [ -n "$_deps" ] || return 0
+
+    _req=" $* "
+    _out=""
+    for _d in $_deps; do
+        case "$_req" in *" $_d "*) continue ;; esac
+        case " $_upg " in
+            *" $_d "*) _out="$_out${_out:+ }$_d" ;;
+        esac
+    done
+    printf '%s\n' "$_out"
+}
+
+mio_deps_upgrade() {
+    fix_sources >/dev/null 2>&1
+    mio_ensure_apt_lists || return 1
+    if [ -x "$PREFIX/bin/apt-get" ]; then
+        MIO_NO_DEP_UPGRADE=1 "$PREFIX/bin/apt-get" upgrade -y
+        return $?
+    elif [ -x "$PREFIX/bin/apt" ]; then
+        MIO_NO_DEP_UPGRADE=1 "$PREFIX/bin/apt" upgrade -y
+        return $?
+    elif [ -x "$PREFIX/bin/pkg" ]; then
+        "$PREFIX/bin/pkg" upgrade -y
+        return $?
     fi
     return 1
 }
@@ -2139,7 +2231,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 41 (menü, ses, paketler, mio apt/pkg/install, .so ELF DT_RUNPATH yaması, hız optimizasyonu, dpkg-deb kancası)\n'
+    printf 'mio sürüm: 42 (menü, ses, paketler, mio apt/pkg/install, otomatik bağımlılık yükseltme, korumalı dpkg kancası, .so ELF yaması)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2590,7 +2682,7 @@ export MIO_PREFIX_RO
 # Ancak deb-cevir (dpkg-deb içinden çalışır), yardım ve sürüm komutlarında atla:
 # özellikle dpkg çalışırken mio_repair_dpkg_db tetiklenirse updates/tmp.i silinir.
 case "$COMMAND" in
-    -h|--help|help|yardim|yardım|-v|--version|version|surum|sürüm|deb-cevir|debcevir|convert-deb)
+    -h|--help|help|yardim|yardım|-v|--version|version|surum|sürüm|deb-cevir|debcevir|convert-deb|resolve-deps)
         : ;;
     *)
         if [ "${MIO_DEB_CONVERTING:-0}" != "1" ] && [ "${MIO_DPKG_RUNNING:-0}" != "1" ] && [ -d "${PREFIX:-}/etc/apt" ]; then
@@ -2606,8 +2698,16 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 41 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 42 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
+        ;;
+    resolve-deps)
+        mio_resolve_install_deps "$@"
+        exit $?
+        ;;
+    deps-upgrade|bagimlilik|bağımlılık|bagimliliklar|bağımlılıklar)
+        mio_deps_upgrade
+        exit $?
         ;;
     elf-fix|so-fix)
         _ef=$(mio_repair_elf_libs)
