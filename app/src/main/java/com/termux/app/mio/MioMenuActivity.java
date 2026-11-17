@@ -132,6 +132,10 @@ public final class MioMenuActivity extends Activity {
             + " • Yazı: " + MioTextStyle.getFontSize(context);
         addText(summary);
 
+        LinearLayout quickPackageRow = newRow();
+        addButton(quickPackageRow, "Mio Paket", v -> showMioPackageStoreDialog());
+        mRoot.addView(quickPackageRow);
+
         // ------------------------------------------------------------------------ audio -----
         addSection("Ses");
 
@@ -454,6 +458,7 @@ public final class MioMenuActivity extends Activity {
                 ? "hepsi güncel" : updatable.size() + " paket güncellenebilir"));
 
         LinearLayout packageRow = newRow();
+        addButton(packageRow, "Mio Paket", v -> showMioPackageStoreDialog());
         addButton(packageRow, "Paket " + (updatable.isEmpty() ? "güncelle" : "güncelle (" + updatable.size() + ")"),
             v -> updateAllPackages());
         addButton(packageRow, "Örnek oluştur", v -> createTemplatePackage());
@@ -693,6 +698,36 @@ public final class MioMenuActivity extends Activity {
                 MioTextStyle.resetColors(this);
                 toast("Beautify ayarları sıfırlandı.");
                 buildPanel();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /* -------------------------------------------------------------------------------------- */
+    /* Mio Paket                                                                              */
+    /* -------------------------------------------------------------------------------------- */
+
+    private static final String MIO_CODE_SERVER_DEB_URL =
+        "https://github.com/Mio-129/tm-pkg/releases/download/vq/code-server.deb";
+
+    /** Show the "Mio Paket" list (e.g. Code Server) and install the chosen item in Termux. */
+    private void showMioPackageStoreDialog() {
+        final String[] items = new String[]{
+            "Code Server"
+        };
+
+        new AlertDialog.Builder(this)
+            .setTitle("Mio Paket")
+            .setItems(items, (dialog, which) -> {
+                if (which == 0) {
+                    String cmd = "mkdir -p ~/.mio/tmp && cd ~/.mio/tmp"
+                        + " && (ls \"$PREFIX/var/lib/apt/lists/\"*Packages* >/dev/null 2>&1 || apt update)"
+                        + " && (command -v curl >/dev/null 2>&1 || apt install -y curl)"
+                        + " && curl -fL --progress-bar -o ./code-server.deb " + MioPackages.quote(MIO_CODE_SERVER_DEB_URL)
+                        + " && apt install -y ./code-server.deb"
+                        + " && rm -f ./code-server.deb";
+                    runCommand(cmd);
+                }
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
