@@ -598,7 +598,7 @@ install_apt_wrapper() {
     fi
 
     # Zaten güncel sarmalayıcı varsa dokunma (sürüm damgası ile)
-    if grep -q "MIO_WRAPPER_VERSION=28" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_WRAPPER_VERSION=29" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -616,7 +616,7 @@ install_apt_wrapper() {
     cat > "$wrapper" <<'MIO_EOF'
 #!@@PREFIX@@/bin/sh
 # mio apt sarmalayıcısı: apt yollarını düzeltir, sonra gerçek aracı çalıştırır
-MIO_WRAPPER_VERSION=28
+MIO_WRAPPER_VERSION=29
 NAME=@@NAME@@
 bin=$(dirname "$0")
 prefix=$(dirname "$bin")
@@ -821,16 +821,23 @@ if [ "${MIO_NO_DEP_UPGRADE:-0}" != "1" ] && [ -x "$prefix/bin/mio" ]; then
     _is_inst=0
     _skip_dep=0
     _pkgs=""
+    _local_debs=""
     for _a in "$@"; do
         case "$_a" in
             install) _is_inst=1 ;;
             -s|--simulate|--just-print|--dry-run|-d|--download-only|--print-uris) _skip_dep=1 ;;
-            -*|*.deb|/*) ;;
+            *.deb) _local_debs="$_local_debs $_a" ;;
+            -*|/*) ;;
             *) [ "$_is_inst" -eq 1 ] && _pkgs="$_pkgs ${_a%%[=/:]*}" ;;
         esac
     done
-    if [ "$_is_inst" -eq 1 ] && [ "$_skip_dep" -eq 0 ] && [ -n "$_pkgs" ]; then
-        extra_deps=$(MIO_NO_DEP_UPGRADE=1 "$prefix/bin/mio" resolve-deps $_pkgs 2>/dev/null || true)
+    if [ "$_is_inst" -eq 1 ] && [ "$_skip_dep" -eq 0 ]; then
+        for _ldeb in $_local_debs; do
+            [ -f "$_ldeb" ] && "$prefix/bin/mio" deb-cevir "$_ldeb" || :
+        done
+        if [ -n "$_pkgs" ]; then
+            extra_deps=$(MIO_NO_DEP_UPGRADE=1 "$prefix/bin/mio" resolve-deps $_pkgs 2>/dev/null || true)
+        fi
     fi
 fi
 
@@ -1157,14 +1164,32 @@ mio_convert_deb() {
         esac
     fi
 
-    # Hızlı yol: paket GERÇEKTEN com.mio yolluysa dokunma.
+    # Hızlı yol: paket GERÇEKTEN com.mio yolluysa ve mimarisi uyuyorsa dokunma.
+    _sys_arch=$("$PREFIX/bin/dpkg.mio-real" --print-architecture 2>/dev/null || dpkg --print-architecture 2>/dev/null || uname -m 2>/dev/null)
+    _pkg_arch=$("$_ddpkg" -f "$_deb" Architecture 2>/dev/null | tr -d ' \t\r\n')
+    _arch_fix=0
+    case "$_pkg_arch:$_sys_arch" in
+        arm64:aarch64|armhf:arm|amd64:x86_64|i386:i686) _arch_fix=1 ;;
+    esac
+
     _need=0
-    if "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
+    _fhs=0
+    _list=$("$_ddpkg" -c "$_deb" 2>/dev/null | head -n 500)
+    if printf '%s\n' "$_list" | grep -q 'com\.termux'; then
         _need=1
     elif "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | "$_tar" -xzO 2>/dev/null | grep -qa 'com\.termux'; then
         _need=1
+    elif ! printf '%s\n' "$_list" | grep -q 'data/data/com\.mio'; then
+        if printf '%s\n' "$_list" | grep -qE '(^|[[:space:]])\.?/(usr|etc|bin|sbin|lib|lib64|opt|var|share)/|(^|[[:space:]])(usr|etc|bin|sbin|lib|lib64|opt|var|share)/'; then
+            _fhs=1
+        fi
     fi
-    [ "$_need" -eq 1 ] || return 0
+    if [ "$_need" -eq 0 ] && [ "$_fhs" -eq 0 ]; then
+        if "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
+            _need=1
+        fi
+    fi
+    [ "$_need" -eq 1 ] || [ "$_fhs" -eq 1 ] || [ "$_arch_fix" -eq 1 ] || return 0
 
     _base="${TMPDIR:-}"
     case "$_base" in
@@ -1255,6 +1280,65 @@ mio_convert_deb() {
         rm -rf "$_work" 2>/dev/null
         return 1
     fi
+
+    # 2b) Standart Linux/Debian FHS paketi (örn. code-server.deb: /usr/bin, /usr/lib) -> com.mio önekine taşı
+    if [ "$_fhs" -eq 1 ] && [ ! -d "$_root/data/data/com.mio" ]; then
+        mkdir -p "$_root/data/data/com.mio/files" 2>/dev/null
+        if [ -d "$_root/usr" ] && [ ! -e "$_root/data/data/com.mio/files/usr" ]; then
+            mv "$_root/usr" "$_root/data/data/com.mio/files/usr" 2>/dev/null
+        fi
+        mkdir -p "$_root/data/data/com.mio/files/usr" 2>/dev/null
+        for _sub in usr bin sbin lib lib64 etc var opt share; do
+            [ -d "$_root/$_sub" ] || continue
+            case "$_sub" in
+                usr)
+                    cp -a "$_root/usr/." "$_root/data/data/com.mio/files/usr/" 2>/dev/null
+                    rm -rf "$_root/usr" 2>/dev/null
+                    ;;
+                sbin)
+                    mkdir -p "$_root/data/data/com.mio/files/usr/bin" 2>/dev/null
+                    cp -a "$_root/sbin/." "$_root/data/data/com.mio/files/usr/bin/" 2>/dev/null
+                    rm -rf "$_root/sbin" 2>/dev/null
+                    ;;
+                lib64)
+                    mkdir -p "$_root/data/data/com.mio/files/usr/lib" 2>/dev/null
+                    cp -a "$_root/lib64/." "$_root/data/data/com.mio/files/usr/lib/" 2>/dev/null
+                    rm -rf "$_root/lib64" 2>/dev/null
+                    ;;
+                *)
+                    mkdir -p "$_root/data/data/com.mio/files/usr/$_sub" 2>/dev/null
+                    cp -a "$_root/$_sub/." "$_root/data/data/com.mio/files/usr/$_sub/" 2>/dev/null
+                    rm -rf "$_root/$_sub" 2>/dev/null
+                    ;;
+            esac
+        done
+
+        # FHS betik yollarını (/usr/bin, /usr/lib, #!/bin/sh) com.mio önekine çevir
+        for _dir in "$_root/data/data/com.mio/files/usr/bin" \
+                    "$_root/data/data/com.mio/files/usr/libexec" \
+                    "$_root/data/data/com.mio/files/usr/lib"/*/bin; do
+            [ -d "$_dir" ] || continue
+            for _f in "$_dir"/*; do
+                [ -f "$_f" ] || continue
+                [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ] && continue
+                mio_binary_like "$_f" && continue
+                if grep -qE '/(usr|etc)/(bin|lib|share|etc)|#!/bin/sh|#!/usr/bin/env' "$_f" 2>/dev/null; then
+                    [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
+                    sed -i \
+                        -e 's|/data/data/com\.mio/files/usr|@@MIO_USR@@|g' \
+                        -e 's|#!/bin/sh|#!@@MIO_USR@@/bin/sh|g' \
+                        -e 's|#!/usr/bin/env|#!@@MIO_USR@@/bin/env|g' \
+                        -e 's|/usr/lib/|@@MIO_USR@@/lib/|g' \
+                        -e 's|/usr/bin/|@@MIO_USR@@/bin/|g' \
+                        -e 's|/usr/share/|@@MIO_USR@@/share/|g' \
+                        -e 's|/etc/|@@MIO_USR@@/etc/|g' \
+                        -e 's|@@MIO_USR@@|/data/data/com.mio/files/usr|g' \
+                        "$_f" 2>/dev/null
+                fi
+            done
+        done
+    fi
+
     if [ ! -d "$_root/data/data/com.mio" ] && [ ! -d "$_root/data/data/com.termux" ]; then
         printf 'mio: paket içeriği çıkarılamadı: %s\n' "$(basename "$_deb")" >&2
         rm -rf "$_work" 2>/dev/null
@@ -1266,31 +1350,37 @@ mio_convert_deb() {
     #    (python gibi binlerce dosyalık paketlerde 3000 ayrı fork yerine 1 çağrı).
     #    ÖNCE ELF imzasına bakılır, sonra `mio_binary_like`: böylece *.so / *.so.*
     #    kütüphaneleri her zaman `mio_patch_elf` ile DT_RUNPATH yaması alır.
-    grep -rlF 'com.termux' "$_root" > "$_work/hits.lst" 2>/dev/null
-    if [ "$?" -eq 2 ]; then
-        grep -rl 'com\.termux' "$_root" > "$_work/hits.lst" 2>/dev/null || :
-    fi
-    while IFS= read -r _f; do
-        [ -f "$_f" ] || continue
-        # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan düzenleme düşer
-        [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
-        # ELF imzası: 0x7f 'E' 'L' 'F' -> head -c 4 çıktısı $'\177ELF'tir, bu yüzden son 3 bayta bakılır
-        if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
-            # ELF: değiştirme AYNI UZUNLUKTA olmalı, yoksa dosya boyu değişir ve tüm offset'ler
-            # kayar -> "empty/missing DT_HASH/DT_GNU_HASH" / "unused DT entry" hataları.
-            mio_patch_elf "$_f"
-        else
-            mio_binary_like "$_f" && continue
+    if [ "$_need" -eq 1 ]; then
+        grep -rlF 'com.termux' "$_root" > "$_work/hits.lst" 2>/dev/null
+        if [ "$?" -eq 2 ]; then
+            grep -rl 'com\.termux' "$_root" > "$_work/hits.lst" 2>/dev/null || :
+        fi
+        while IFS= read -r _f; do
+            [ -f "$_f" ] || continue
+            # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan düzenleme düşer
+            [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
+            # ELF imzası: 0x7f 'E' 'L' 'F' -> head -c 4 çıktısı $'\177ELF'tir, bu yüzden son 3 bayta bakılır
+            if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+                # ELF: değiştirme AYNI UZUNLUKTA olmalı, yoksa dosya boyu değişir ve tüm offset'ler
+                # kayar -> "empty/missing DT_HASH/DT_GNU_HASH" / "unused DT entry" hataları.
+                mio_patch_elf "$_f"
+            else
+                mio_binary_like "$_f" && continue
+                sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
+                sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
+            fi
+        done < "$_work/hits.lst"
+        for _f in "$_ctl"/*; do
+            [ -f "$_f" ] || continue
+            grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
             sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
             sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
-        fi
-    done < "$_work/hits.lst"
-    for _f in "$_ctl"/*; do
-        [ -f "$_f" ] || continue
-        grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
-        sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
-        sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
-    done
+        done
+    fi
+    if [ "$_arch_fix" -eq 1 ] && [ -f "$_ctl/control" ]; then
+        [ -w "$_ctl/control" ] || chmod u+w "$_ctl/control" 2>/dev/null
+        sed -i "s/^Architecture:[[:space:]]*$_pkg_arch\$/Architecture: $_sys_arch/" "$_ctl/control" 2>/dev/null
+    fi
     for _f in postinst preinst postrm prerm config; do
         [ -f "$_ctl/$_f" ] && chmod 755 "$_ctl/$_f" 2>/dev/null
     done
@@ -1320,34 +1410,36 @@ mio_convert_deb() {
     fi
 
     # 5) DOĞRULA: yeni pakette com.termux kaldı mı?
-    _left=$("$_ddpkg" -c "$_work/new.deb" 2>/dev/null | grep -c 'com\.termux')
-    [ -n "$_left" ] || _left=0
-    if [ "$_left" -eq 0 ]; then
-        _inner=0
-        grep -rlF 'com.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null
-        if [ "$?" -eq 2 ]; then
-            grep -rl 'com\.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null || :
-        fi
-        while IFS= read -r _f; do
-            [ -f "$_f" ] || continue
-            if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
-                grep -qaF '/data/data/com.termux' "$_f" 2>/dev/null || continue
-            else
-                mio_binary_like "$_f" && continue
+    if [ "$_need" -eq 1 ]; then
+        _left=$("$_ddpkg" -c "$_work/new.deb" 2>/dev/null | grep -c 'com\.termux')
+        [ -n "$_left" ] || _left=0
+        if [ "$_left" -eq 0 ]; then
+            _inner=0
+            grep -rlF 'com.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null
+            if [ "$?" -eq 2 ]; then
+                grep -rl 'com\.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null || :
             fi
-            _inner=$((_inner + 1))
-            [ "$_inner" -le 3 ] && printf 'mio: çevrilmeyen dosya: %s\n' "$_f" >&2
-        done < "$_work/left.lst"
-        if [ "$_inner" -gt 0 ]; then
-            printf 'mio: paket içinde com.termux kaldı (%s dosya)\n' "$_inner" >&2
+            while IFS= read -r _f; do
+                [ -f "$_f" ] || continue
+                if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+                    grep -qaF '/data/data/com.termux' "$_f" 2>/dev/null || continue
+                else
+                    mio_binary_like "$_f" && continue
+                fi
+                _inner=$((_inner + 1))
+                [ "$_inner" -le 3 ] && printf 'mio: çevrilmeyen dosya: %s\n' "$_f" >&2
+            done < "$_work/left.lst"
+            if [ "$_inner" -gt 0 ]; then
+                printf 'mio: paket içinde com.termux kaldı (%s dosya)\n' "$_inner" >&2
+                rm -rf "$_work" 2>/dev/null
+                return 1
+            fi
+        fi
+        if [ "$_left" -gt 0 ]; then
+            printf 'mio: paket çevrilemedi (%s yolda com.termux kaldı): %s\n' "$_left" "$(basename "$_deb")" >&2
             rm -rf "$_work" 2>/dev/null
             return 1
         fi
-    fi
-    if [ "$_left" -gt 0 ]; then
-        printf 'mio: paket çevrilemedi (%s yolda com.termux kaldı): %s\n' "$_left" "$(basename "$_deb")" >&2
-        rm -rf "$_work" 2>/dev/null
-        return 1
     fi
 
     # 6) yerine koy (`new.deb` az önce doğrulandı; aynı dosya sisteminde `mv -f` anlıktır)
@@ -2254,7 +2346,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 43 (menü, ses, paketler, mio apt/pkg/install, hızlı deb-cevir -Znone, sessiz bootstrap, .hushlogin metin/echo, korumalı dpkg)\n'
+    printf 'mio sürüm: 44 (menü, ses, paketler, mio apt/pkg/install, Debian/FHS+arm64 deb-cevir, hızlı -Znone, sessiz bootstrap, .hushlogin, korumalı dpkg)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2721,7 +2813,7 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 43 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 44 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     resolve-deps)
