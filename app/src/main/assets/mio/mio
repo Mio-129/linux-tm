@@ -1005,6 +1005,7 @@ mio_patch_elf() {
     grep -qa 'com\.termux' "$_pe_f" 2>/dev/null || return 0
 
     # aynı uzunlukta yeni yol (21 bayt)
+    _pe_old="/data/data/com.""termux"
     _pe_new="/data/data/com.mio///"
     [ "$(printf '%s' "$_pe_new" | wc -c | tr -d ' ')" = "21" ] || return 1
 
@@ -1016,7 +1017,7 @@ mio_patch_elf() {
     esac
     _pe_native="$_pe_prefix/libexec/mio/mio-elfpatch"
     if [ -x "$_pe_native" ] && "$_pe_native" "$_pe_f" 2>/dev/null; then
-        if ! grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+        if ! grep -qaF "$_pe_old" "$_pe_f" 2>/dev/null; then
             chmod 755 "$_pe_f" 2>/dev/null
             return 0
         fi
@@ -1025,7 +1026,7 @@ mio_patch_elf() {
     _pe_before=$(wc -c < "$_pe_f" 2>/dev/null | tr -d ' ')
 
     # Yedek 1: Saf `od -An -tx1 -v` + KMP `awk` + `dd conv=notrunc` (hiçbir NUL/yerel ayarı/Toybox sed sınırına takılmaz)
-    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+    if grep -qaF "$_pe_old" "$_pe_f" 2>/dev/null; then
         for _pe_off in $(LC_ALL=C od -An -tx1 -v "$_pe_f" 2>/dev/null | LC_ALL=C awk '
             BEGIN {
                 split("2f 64 61 74 61 2f 64 61 74 61 2f 63 6f 6d 2e 74 65 72 6d 75 78", pat, " ")
@@ -1059,7 +1060,7 @@ mio_patch_elf() {
     fi
 
     # Yedek 2: sed + grep -aboF + dd
-    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+    if grep -qaF "$_pe_old" "$_pe_f" 2>/dev/null; then
         _pe_tmp="$_pe_f.mio-elf"
         rm -f "$_pe_tmp" 2>/dev/null
         LC_ALL=C sed -e 's|/data/data/com\.termux|/data/data/com.mio///|g' "$_pe_f" > "$_pe_tmp" 2>/dev/null
@@ -1070,13 +1071,13 @@ mio_patch_elf() {
         fi
         rm -f "$_pe_tmp" 2>/dev/null
     fi
-    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
-        for _pe_off in $(grep -aboF '/data/data/com.termux' "$_pe_f" 2>/dev/null | cut -d: -f1); do
+    if grep -qaF "$_pe_old" "$_pe_f" 2>/dev/null; then
+        for _pe_off in $(grep -aboF "$_pe_old" "$_pe_f" 2>/dev/null | cut -d: -f1); do
             [ -n "$_pe_off" ] || continue
             printf '/data/data/com.mio///' | dd of="$_pe_f" bs=1 seek="$_pe_off" conv=notrunc 2>/dev/null
         done
     fi
-    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+    if grep -qaF "$_pe_old" "$_pe_f" 2>/dev/null; then
         printf 'mio: uyarı: ikili dosya güvenle çevrilemedi: %s\n' "$(basename "$_pe_f")" >&2
         return 1
     fi
@@ -1094,10 +1095,11 @@ mio_patch_elf() {
 # ve .so kütüphanelerini (`libpython3.14.so` vb.) `/data/data/com.mio///` yoluna çevirir.
 mio_repair_elf_libs() {
     _rel_fixed=0
+    _rel_old="/data/data/com.""termux"
     for _rel_dir in "$PREFIX/lib" "$PREFIX/bin" "$PREFIX/libexec"; do
         [ -d "$_rel_dir" ] || continue
         _rel_hits=$(mktemp 2>/dev/null || printf '%s/tmp/mio-elf-hits.$$' "$PREFIX")
-        grep -rlF '/data/data/com.termux' "$_rel_dir" > "$_rel_hits" 2>/dev/null
+        grep -rlF "$_rel_old" "$_rel_dir" > "$_rel_hits" 2>/dev/null
         if [ "$?" -eq 2 ]; then
             grep -rl '/data/data/com\.termux' "$_rel_dir" > "$_rel_hits" 2>/dev/null || :
         fi
@@ -1475,10 +1477,11 @@ mio_convert_deb() {
             if [ "$?" -eq 2 ]; then
                 grep -rl 'com\.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null || :
             fi
+            _step5_old="/data/data/com.""termux"
             while IFS= read -r _f; do
                 [ -f "$_f" ] || continue
                 if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
-                    grep -qaF '/data/data/com.termux' "$_f" 2>/dev/null || continue
+                    grep -qaF "$_step5_old" "$_f" 2>/dev/null || continue
                 else
                     mio_binary_like "$_f" && continue
                 fi
@@ -2402,7 +2405,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 47 (menü, ses, paketler, mio apt/pkg/install, NDK+od/awk ELF yama, Debian/FHS+arm64, hızlı deb-cevir, sessiz bootstrap)\n'
+    printf 'mio sürüm: 48 (menü, ses, paketler, mio apt/pkg/install, NDK+od/awk ELF yama, Debian/FHS+arm64, hızlı deb-cevir, sessiz bootstrap)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2869,7 +2872,7 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 47 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 48 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     resolve-deps)

@@ -454,6 +454,10 @@ public final class MioMenuActivity extends Activity {
         });
         mRoot.addView(packageRow);
 
+        LinearLayout depsRow = newRow();
+        addButton(depsRow, "Tüm Bağımlılıkları Kur", v -> installAllDependencies());
+        mRoot.addView(depsRow);
+
         // ------------------------------------------------------------------------ close -----
         LinearLayout closeRow = newRow();
         addButton(closeRow, "Kapat", v -> finish());
@@ -729,6 +733,16 @@ public final class MioMenuActivity extends Activity {
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
+    }
+
+    /** Install core runtime/build tools and glibc-runner so packages never miss dependencies. */
+    private void installAllDependencies() {
+        String cmd = "dpkg --configure -a; apt --fix-broken install -y;"
+            + " apt update && apt upgrade -y"
+            + " && apt install -y curl wget git unzip zip tar xz-utils proot python nodejs openssh openssl ncurses-utils clang make"
+            + " && (command -v grun >/dev/null 2>&1 || (apt install -y glibc-repo && apt update && apt install -y glibc-runner))"
+            + " && echo 'Tum bagimliliklar kuruldu!'";
+        runCommand(cmd);
     }
 
     /* -------------------------------------------------------------------------------------- */

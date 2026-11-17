@@ -247,7 +247,9 @@ public final class MioBootstrap {
                 }
             }
 
-            rewritePrefixPaths(targetFile);
+            if (!"mio".equals(command)) {
+                rewritePrefixPaths(targetFile);
+            }
 
             if (!targetFile.setExecutable(true, false)) {
                 Logger.logWarn(LOG_TAG, "Failed to set the execute permission of \"" + targetFile.getAbsolutePath() + "\"");
@@ -965,7 +967,7 @@ public final class MioBootstrap {
     private static void rewritePrefixPaths(@NonNull File file) {
         final String legacy = TermuxConstants.TERMUX_LEGACY_DATA_DIR_PATH;
         final String current = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
-        if (legacy.equals(current)) return;
+        if (legacy.equals(current) || "/data/data/com.mio".equals(current)) return;
 
         try {
             String content = readText(file);
