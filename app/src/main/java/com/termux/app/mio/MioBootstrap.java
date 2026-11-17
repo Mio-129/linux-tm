@@ -133,6 +133,7 @@ public final class MioBootstrap {
                 process = builder.start();
                 int exitCode = process.waitFor();
                 Logger.logInfo(LOG_TAG, "Refreshed the package wrappers with `mio sarmalayici`, exit code " + exitCode);
+                ensureBaseToolsOnce();
             } catch (Exception e) {
                 Logger.logStackTraceWithMessage(LOG_TAG, "Failed to refresh the package wrappers", e);
             } finally {
@@ -141,6 +142,64 @@ public final class MioBootstrap {
         }, "mio-package-wrappers");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static volatile boolean sBaseToolsAttempted = false;
+
+    /**
+     * Silently install `curl` and `wget` once on first launch when missing, so scripts and
+     * "Mio Paket" downloads do not have to install or ask for them later.
+     */
+    private static void ensureBaseToolsOnce() {
+        if (sBaseToolsAttempted) return;
+        sBaseToolsAttempted = true;
+
+        File marker = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/.mio-base-tools-done");
+        File curl = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR, "curl");
+        File wget = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR, "wget");
+        if (marker.isFile() && curl.isFile() && wget.isFile()) return;
+        if (curl.isFile() && wget.isFile()) {
+            if (marker.getParentFile() != null && marker.getParentFile().isDirectory()) {
+                writeBytes(marker, new byte[]{'1', '\n'});
+            }
+            return;
+        }
+
+        File sh = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR, "sh");
+        if (!sh.isFile()) return;
+
+        Process process = null;
+        try {
+            String cmd = "for _pc in /proc/[0-9]*/cmdline; do "
+                + "[ -r \"$_pc\" ] || continue; "
+                + "if tr '\\000' ' ' < \"$_pc\" 2>/dev/null | grep -qE 'dpkg\\.mio-real|apt\\.mio-real|apt-get\\.mio-real'; then exit 0; fi; "
+                + "done; "
+                + "(ls \"$PREFIX/var/lib/apt/lists/\"*Packages* >/dev/null 2>&1 || apt-get update -qq) && "
+                + "apt-get install -y -qq curl wget";
+            ProcessBuilder builder = new ProcessBuilder(sh.getAbsolutePath(), "-c", cmd);
+            builder.redirectErrorStream(true);
+            builder.redirectOutput(new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "tmp/mio-base-tools.log"));
+            builder.environment().put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+            builder.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
+            builder.environment().put("TMPDIR", TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/tmp");
+            builder.environment().put("DEBIAN_FRONTEND", "noninteractive");
+            builder.environment().put("TERMUX_PKG_NO_MIRROR_SELECT", "1");
+            builder.environment().put("APT_CONFIG", TermuxConstants.TERMUX_ETC_PREFIX_DIR_PATH + "/apt/apt.conf.d/mio-apt.conf");
+            builder.environment().put("PATH", TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/libexec/mio:"
+                + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":/system/bin:/system/xbin");
+            builder.environment().remove("LD_PRELOAD");
+            process = builder.start();
+            boolean finished = process.waitFor(90, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroy();
+            } else if (curl.isFile() && wget.isFile() && marker.getParentFile() != null && marker.getParentFile().isDirectory()) {
+                writeBytes(marker, new byte[]{'1', '\n'});
+            }
+        } catch (Exception e) {
+            Logger.logWarn(LOG_TAG, "Failed to install base tools (curl/wget): " + e.getMessage());
+        } finally {
+            if (process != null) process.destroy();
+        }
     }
 
     /**

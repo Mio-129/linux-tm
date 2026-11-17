@@ -132,10 +132,6 @@ public final class MioMenuActivity extends Activity {
             + " • Yazı: " + MioTextStyle.getFontSize(context);
         addText(summary);
 
-        LinearLayout quickPackageRow = newRow();
-        addButton(quickPackageRow, "Mio Paket", v -> showMioPackageStoreDialog());
-        mRoot.addView(quickPackageRow);
-
         // ------------------------------------------------------------------------ audio -----
         addSection("Ses");
 
@@ -721,13 +717,14 @@ public final class MioMenuActivity extends Activity {
             .setItems(items, (dialog, which) -> {
                 if (which == 0) {
                     String cmd = "mkdir -p ~/.mio/tmp && cd ~/.mio/tmp"
-                        + " && (ls \"$PREFIX/var/lib/apt/lists/\"*Packages* >/dev/null 2>&1 || apt update)"
-                        + " && (command -v curl >/dev/null 2>&1 || apt install -y curl)"
-                        + " && curl -fL --progress-bar -o ./code-server.deb " + MioPackages.quote(MIO_CODE_SERVER_DEB_URL)
-                        + " && mio deb-cevir ./code-server.deb"
+                        + " && (if command -v curl >/dev/null 2>&1; then curl -fL --progress-bar -o ./code-server.deb "
+                        + MioPackages.quote(MIO_CODE_SERVER_DEB_URL)
+                        + "; else wget -O ./code-server.deb " + MioPackages.quote(MIO_CODE_SERVER_DEB_URL) + "; fi)"
                         + " && apt install -y ./code-server.deb"
                         + " && rm -f ./code-server.deb"
-                        + " && (command -v grun >/dev/null 2>&1 || (apt install -y glibc-repo && apt update && apt install -y glibc-runner) || true)"
+                        + " && (command -v grun >/dev/null 2>&1 || ("
+                        + "(ls \"$PREFIX/var/lib/apt/lists/\"*Packages* >/dev/null 2>&1 || apt update)"
+                        + " && apt install -y glibc-repo && apt update && apt install -y glibc-runner))"
                         + " && if [ -f \"$PREFIX/lib/code-server/bin/code-server\" ]; then"
                         + " sed -i 's|exec \"\\$ROOT/lib/node\" \"\\$ROOT\" \"\\$@\"|if command -v grun >/dev/null 2>\\&1 \\&\\& [ -x \"\\$ROOT/lib/node\" ]; then exec grun \"\\$ROOT/lib/node\" \"\\$ROOT\" \"\\$@\"; elif command -v node >/dev/null 2>\\&1; then exec node \"\\$ROOT\" \"\\$@\"; else exec \"\\$ROOT/lib/node\" \"\\$ROOT\" \"\\$@\"; fi|' \"$PREFIX/lib/code-server/bin/code-server\" 2>/dev/null;"
                         + " fi"

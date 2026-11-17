@@ -1014,20 +1014,31 @@ mio_patch_elf() {
     rm -f "$_pe_tmp" 2>/dev/null
     LC_ALL=C sed -e 's|/data/data/com\.termux|/data/data/com.mio///|g' "$_pe_f" > "$_pe_tmp" 2>/dev/null
     _pe_after=$(wc -c < "$_pe_tmp" 2>/dev/null | tr -d ' ')
-    if [ -z "$_pe_after" ] || [ "$_pe_before" != "$_pe_after" ]; then
-        rm -f "$_pe_tmp" 2>/dev/null
-        printf 'mio: uyarı: ikili dosya güvenle çevrilemedi (boyut %s -> %s): %s\n' \
-            "$_pe_before" "$_pe_after" "$(basename "$_pe_f")" >&2
-        return 1
+    if [ -n "$_pe_after" ] && [ "$_pe_before" = "$_pe_after" ] && \
+       [ "$(head -c 4 "$_pe_tmp" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+        cat "$_pe_tmp" > "$_pe_f" 2>/dev/null
     fi
-    # ELF başlığı hâlâ yerinde mi?
-    if [ "$(head -c 4 "$_pe_tmp" 2>/dev/null | tail -c 3)" != "ELF" ]; then
-        rm -f "$_pe_tmp" 2>/dev/null
-        printf 'mio: uyarı: ikili dosya bozuldu, atlandı: %s\n' "$(basename "$_pe_f")" >&2
-        return 1
-    fi
-    cat "$_pe_tmp" > "$_pe_f" 2>/dev/null
     rm -f "$_pe_tmp" 2>/dev/null
+
+    # Bazı ikililerde (örn. glibc gencat/getconf/getent veya Toybox sed ile \0 baytları)
+    # sed ilk NUL'da durup dosyayı değiştirmeden bırakabiliyor. Kalan tüm eşleşmeleri
+    # `grep -aboF` + `dd conv=notrunc` ile tam bayt konumunda yerinde yamala.
+    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+        for _pe_off in $(grep -aboF '/data/data/com.termux' "$_pe_f" 2>/dev/null | cut -d: -f1); do
+            [ -n "$_pe_off" ] || continue
+            printf '/data/data/com.mio///' | dd of="$_pe_f" bs=1 seek="$_pe_off" conv=notrunc 2>/dev/null
+        done
+    fi
+    if grep -qaF '/data/data/com.termux' "$_pe_f" 2>/dev/null; then
+        printf 'mio: uyarı: ikili dosya güvenle çevrilemedi: %s\n' "$(basename "$_pe_f")" >&2
+        return 1
+    fi
+    _pe_final=$(wc -c < "$_pe_f" 2>/dev/null | tr -d ' ')
+    if [ -z "$_pe_final" ] || [ "$_pe_before" != "$_pe_final" ]; then
+        printf 'mio: uyarı: ikili dosya boyutu değişti (%s -> %s): %s\n' \
+            "$_pe_before" "$_pe_final" "$(basename "$_pe_f")" >&2
+        return 1
+    fi
     chmod 755 "$_pe_f" 2>/dev/null
     return 0
 }
@@ -1174,17 +1185,18 @@ mio_convert_deb() {
 
     _need=0
     _fhs=0
+    _has_mio=0
     _list=$("$_ddpkg" -c "$_deb" 2>/dev/null | head -n 500)
     if printf '%s\n' "$_list" | grep -q 'com\.termux'; then
         _need=1
     elif "$_ddpkg" --ctrl-tarfile "$_deb" 2>/dev/null | "$_tar" -xzO 2>/dev/null | grep -qa 'com\.termux'; then
         _need=1
-    elif ! printf '%s\n' "$_list" | grep -q 'data/data/com\.mio'; then
-        if printf '%s\n' "$_list" | grep -qE '(^|[[:space:]])\.?/(usr|etc|bin|sbin|lib|lib64|opt|var|share)/|(^|[[:space:]])(usr|etc|bin|sbin|lib|lib64|opt|var|share)/'; then
-            _fhs=1
-        fi
+    elif printf '%s\n' "$_list" | grep -q 'data/data/com\.mio'; then
+        _has_mio=1
+    elif printf '%s\n' "$_list" | grep -qE '(^|[[:space:]])\.?/(usr|etc|bin|sbin|lib|lib64|opt|var|share)/|(^|[[:space:]])(usr|etc|bin|sbin|lib|lib64|opt|var|share)/'; then
+        _fhs=1
     fi
-    if [ "$_need" -eq 0 ] && [ "$_fhs" -eq 0 ]; then
+    if [ "$_need" -eq 0 ] && [ "$_fhs" -eq 0 ] && [ "$_has_mio" -eq 0 ]; then
         if "$_ddpkg" -c "$_deb" 2>/dev/null | grep -q 'com\.termux'; then
             _need=1
         fi
@@ -1345,6 +1357,11 @@ mio_convert_deb() {
         return 1
     fi
 
+    # 3a) DİZİN VE DOSYA İZİNLERİ: hem step 3 yamalarının (0555 dizinlerde .mio-elf / sed -i)
+    #     takılmaması hem de dpkg *.dpkg-new yazarken Permission denied vermemesi için ÖNCE düzelt.
+    find "$_root" -type d ! -perm -755 -exec chmod 755 {} + 2>/dev/null
+    find "$_root" -type f ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
+
     # 3) metin dosyaları ve ELF ikilileri (.so dahil):
     #    Tek bir `grep -rlF` ile yalnız içinde `com.termux` geçen dosyalar seçilir
     #    (python gibi binlerce dosyalık paketlerde 3000 ayrı fork yerine 1 çağrı).
@@ -1384,14 +1401,6 @@ mio_convert_deb() {
     for _f in postinst preinst postrm prerm config; do
         [ -f "$_ctl/$_f" ] && chmod 755 "$_ctl/$_f" 2>/dev/null
     done
-
-    # 3c) DİZİN VE DOSYA İZİNLERİ: dpkg, dosyayı hedef dizine `*.dpkg-new` olarak yazar; dizin
-    #     yazılabilir değilse "unable to create ... Permission denied" verir. Ayrıca non-root
-    #     Android'de dpkg bazı 0444 dosyaları fsync için O_WRONLY ile açmaya çalışırken
-    #     "unable to open ...dpkg-new: Permission denied" verebiliyor; bu yüzden salt-okunur
-    #     normal dosyalara da sahip yazma izni (u+w) eklenir.
-    find "$_root" -type d ! -perm -755 -exec chmod 755 {} + 2>/dev/null
-    find "$_root" -type f ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
 
     # 4) yeniden paketle: DEBIAN dizini kontrol dosyalarından, veri ağacı çıkarılan kökten
     cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
@@ -2346,7 +2355,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 44 (menü, ses, paketler, mio apt/pkg/install, Debian/FHS+arm64 deb-cevir, hızlı -Znone, sessiz bootstrap, .hushlogin, korumalı dpkg)\n'
+    printf 'mio sürüm: 45 (menü, ses, paketler, mio apt/pkg/install, Debian/FHS+arm64, bayt ELF yaması, hızlı deb-cevir, sessiz bootstrap, .hushlogin)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2813,7 +2822,7 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 44 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 45 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
         exit 0
         ;;
     resolve-deps)
