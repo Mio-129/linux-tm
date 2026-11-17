@@ -931,11 +931,15 @@ mio_ar_write() {
 # Metin olarak güvenle değiştirilemeyecek dosya türleri: sıkıştırılmış arşivler ve ikili
 # biçimler. Bunların İÇİNDEKİ yol metni değiştirilmez; doğrulama da bu dosyaları atlar
 # (aksi halde çevrilemeyen bir .gz yüzünden paket "çevrilemedi" sayılırdı).
+# NOT: *.so burada ATLANMAZ — ELF paylaşımlı kütüphaneler (`libpython3.14.so` vb.)
+# içlerindeki DT_RUNPATH `/data/data/com.termux/files/usr/lib` yüzünden Android
+# dinamik yükleyicisinde "library ... not found" hatası verir; bu yüzden `mio_patch_elf`
+# ile çevrilmeleri şarttır.
 #   mio_binary_like <dosya> -> 0 ise atlanmalı
 mio_binary_like() {
     case "$1" in
         *.gz|*.tgz|*.xz|*.lzma|*.bz2|*.zip|*.jar|*.apk|*.png|*.jpg|*.jpeg|*.gif|*.webp|\
-        *.ttf|*.otf|*.woff|*.woff2|*.db|*.sqlite|*.pyc|*.so|*.a|*.o|*.mo|*.ico|*.pdf|\
+        *.ttf|*.otf|*.woff|*.woff2|*.db|*.sqlite|*.pyc|*.a|*.o|*.mo|*.ico|*.pdf|\
         *.gz.*|*.7z|*.rar|*.zst|*.lz4)
             return 0 ;;
     esac
@@ -985,6 +989,29 @@ mio_patch_elf() {
     rm -f "$_pe_tmp" 2>/dev/null
     chmod 755 "$_pe_f" 2>/dev/null
     return 0
+}
+
+# Kurulu önekteki ($PREFIX/lib, $PREFIX/bin, $PREFIX/libexec) yamalanmamış ELF ikilileri
+# ve .so kütüphanelerini (`libpython3.14.so` vb.) `/data/data/com.mio///` yoluna çevirir.
+mio_repair_elf_libs() {
+    _rel_fixed=0
+    for _rel_dir in "$PREFIX/lib" "$PREFIX/bin" "$PREFIX/libexec"; do
+        [ -d "$_rel_dir" ] || continue
+        _rel_hits=$(mktemp 2>/dev/null || printf '%s/tmp/mio-elf-hits.$$' "$PREFIX")
+        grep -rlF '/data/data/com.termux' "$_rel_dir" > "$_rel_hits" 2>/dev/null
+        if [ "$?" -eq 2 ]; then
+            grep -rl '/data/data/com\.termux' "$_rel_dir" > "$_rel_hits" 2>/dev/null || :
+        fi
+        while IFS= read -r _rel_f; do
+            [ -f "$_rel_f" ] || continue
+            [ -L "$_rel_f" ] && continue
+            if [ "$(head -c 4 "$_rel_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+                mio_patch_elf "$_rel_f" && _rel_fixed=$((_rel_fixed + 1))
+            fi
+        done < "$_rel_hits"
+        rm -f "$_rel_hits" 2>/dev/null
+    done
+    printf '%s\n' "$_rel_fixed"
 }
 
 # Teşhis: bir .deb neden çevrilemiyor? Hiçbir şeyi değiştirmez.
@@ -1193,11 +1220,18 @@ mio_convert_deb() {
         return 1
     fi
 
-    # 3) metin dosyaları: shebang, conffiles, yapılandırma (adlar zaten com.mio)
-    find "$_root" -type f 2>/dev/null | while IFS= read -r _f; do
-        grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
-        mio_binary_like "$_f" && continue
-        # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan `sed -i` sessizce düşer
+    # 3) metin dosyaları ve ELF ikilileri (.so dahil):
+    #    Tek bir `grep -rlF` ile yalnız içinde `com.termux` geçen dosyalar seçilir
+    #    (python gibi binlerce dosyalık paketlerde 3000 ayrı fork yerine 1 çağrı).
+    #    ÖNCE ELF imzasına bakılır, sonra `mio_binary_like`: böylece *.so / *.so.*
+    #    kütüphaneleri her zaman `mio_patch_elf` ile DT_RUNPATH yaması alır.
+    grep -rlF 'com.termux' "$_root" > "$_work/hits.lst" 2>/dev/null
+    if [ "$?" -eq 2 ]; then
+        grep -rl 'com\.termux' "$_root" > "$_work/hits.lst" 2>/dev/null || :
+    fi
+    while IFS= read -r _f; do
+        [ -f "$_f" ] || continue
+        # Salt-okunur gelebilir (tar izinleri korur): yazma izni olmadan düzenleme düşer
         [ -w "$_f" ] || chmod u+w "$_f" 2>/dev/null
         # ELF imzası: 0x7f 'E' 'L' 'F' -> head -c 4 çıktısı $'\177ELF'tir, bu yüzden son 3 bayta bakılır
         if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
@@ -1205,10 +1239,11 @@ mio_convert_deb() {
             # kayar -> "empty/missing DT_HASH/DT_GNU_HASH" / "unused DT entry" hataları.
             mio_patch_elf "$_f"
         else
+            mio_binary_like "$_f" && continue
             sed -i 's|/data/data/com\.termux|/data/data/com.mio|g' "$_f" 2>/dev/null
             sed -i 's|com\.termux|com.mio|g' "$_f" 2>/dev/null
         fi
-    done
+    done < "$_work/hits.lst"
     for _f in "$_ctl"/*; do
         [ -f "$_f" ] || continue
         grep -qa 'com\.termux' "$_f" 2>/dev/null || continue
@@ -1224,15 +1259,8 @@ mio_convert_deb() {
     #     Android'de dpkg bazı 0444 dosyaları fsync için O_WRONLY ile açmaya çalışırken
     #     "unable to open ...dpkg-new: Permission denied" verebiliyor; bu yüzden salt-okunur
     #     normal dosyalara da sahip yazma izni (u+w) eklenir.
-    find "$_root" -type d 2>/dev/null | while IFS= read -r _d; do
-        case "$_d" in
-            "$_root"/*/bin|"$_root"/*/sbin) _m=755 ;;
-            *) _m=755 ;;
-        esac
-        [ -w "$_d" ] || chmod u+w "$_d" 2>/dev/null
-        chmod "$_m" "$_d" 2>/dev/null
-    done
-    find "$_root" -type f ! -perm -u+w -exec chmod u+w {} \; 2>/dev/null
+    find "$_root" -type d ! -perm -755 -exec chmod 755 {} + 2>/dev/null
+    find "$_root" -type f ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
 
     # 4) yeniden paketle: DEBIAN dizini kontrol dosyalarından, veri ağacı çıkarılan kökten
     cp -a "$_ctl/." "$_root/DEBIAN/" 2>/dev/null
@@ -1255,11 +1283,20 @@ mio_convert_deb() {
     [ -n "$_left" ] || _left=0
     if [ "$_left" -eq 0 ]; then
         _inner=0
-        for _f in $(grep -rl 'com\.termux' "$_root" "$_ctl" 2>/dev/null); do
-            mio_binary_like "$_f" && continue
+        grep -rlF 'com.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null
+        if [ "$?" -eq 2 ]; then
+            grep -rl 'com\.termux' "$_root" "$_ctl" > "$_work/left.lst" 2>/dev/null || :
+        fi
+        while IFS= read -r _f; do
+            [ -f "$_f" ] || continue
+            if [ "$(head -c 4 "$_f" 2>/dev/null | tail -c 3)" = "ELF" ]; then
+                grep -qaF '/data/data/com.termux' "$_f" 2>/dev/null || continue
+            else
+                mio_binary_like "$_f" && continue
+            fi
             _inner=$((_inner + 1))
             [ "$_inner" -le 3 ] && printf 'mio: çevrilmeyen dosya: %s\n' "$_f" >&2
-        done
+        done < "$_work/left.lst"
         if [ "$_inner" -gt 0 ]; then
             printf 'mio: paket içinde com.termux kaldı (%s dosya)\n' "$_inner" >&2
             rm -rf "$_work" 2>/dev/null
@@ -1518,7 +1555,7 @@ install_dpkg_wrapper() {
     [ -f "$wrapper" ] || [ -f "$real" ] || return 0
 
     # Sarmalayıcı zaten güncelse dokunma
-    if grep -q "MIO_DPKG_WRAPPER_VERSION=14" "$wrapper" 2>/dev/null; then
+    if grep -q "MIO_DPKG_WRAPPER_VERSION=15" "$wrapper" 2>/dev/null; then
         return 0
     fi
 
@@ -1539,7 +1576,7 @@ install_dpkg_wrapper() {
 # Sürüm 6: dönüşüm BAŞARISIZ olursa dpkg durdurulur. Eski sarmalayıcı hatayı `|| :` ile
 # yutuyordu; dpkg orijinal com.termux yollu paketi alıp "unable to stat ... Permission denied"
 # ile çıkış kodu 1 veriyordu ve hatanın nedeni hiç görünmüyordu.
-MIO_DPKG_WRAPPER_VERSION=14
+MIO_DPKG_WRAPPER_VERSION=15
 bin=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 case "$bin" in
     ""|/) bin=@@PREFIX@@/bin ;;
@@ -1590,20 +1627,27 @@ if [ "$failed" -ne 0 ]; then
     exit 1
 fi
 
-# Sürüm 13: `apt install` bu sarmalayıcıdan geçer, `mio` betiğinden geçmez. Paket kurulumu
-# 0555 kalmış bir $PREFIX/share dizininde "unable to create ...dpkg-new: Permission denied"
-# ile düşüyordu; dpkg çağrılmadan önce izinleri onar.
-if [ -x "$mio" ]; then
-    MIO_WRAPPER_QUIET=1 "$mio" sarmalayici >/dev/null 2>&1 || :
-fi
-# Onarım yine de yetmezse (çok iç içe 0555 dizin) son bir kez doğrudan dene. POSIX, ara
-# dosyasız: iki geçişli find. Hata olsa bile dpkg'yi durdurma, kendi hatasını göstersin.
-for _base in "$prefix/share" "$prefix/bin" "$prefix/lib" "$prefix/etc"; do
-    [ -d "$_base" ] || continue
-    if [ "$(find "$_base" -type d ! -perm -u+w 2>/dev/null | wc -l)" -gt 0 ] 2>/dev/null; then
-        find "$_base" -type d ! -perm -u+w -exec chmod u+rwx {} \; 2>/dev/null || :
-    fi
+# Sürüm 15: Yalnız paket değiştiren çağrılarda (--unpack, -i, --configure, -r, -P)
+# sarmalayıcı/izin/db onarımı yap; --print-architecture / --assert-* sorgularında bekleme.
+_need_prep=0
+for a in "$@"; do
+    case "$a" in
+        *.deb|-i|--install|--unpack|--configure|-r|--remove|-P|--purge|--triggers-only)
+            _need_prep=1
+            break
+            ;;
+    esac
 done
+
+if [ "$_need_prep" -eq 1 ]; then
+    if [ -x "$mio" ]; then
+        MIO_WRAPPER_QUIET=1 "$mio" sarmalayici >/dev/null 2>&1 || :
+    fi
+    for _base in "$prefix/share" "$prefix/bin" "$prefix/lib" "$prefix/etc"; do
+        [ -d "$_base" ] || continue
+        find "$_base" -type d ! -perm -u+w -exec chmod u+rwx {} + 2>/dev/null || :
+    done
+fi
 
 export MIO_DPKG_RUNNING=1
 exec "$real" "$@"
@@ -2095,7 +2139,7 @@ send() {
 }
 
 diagnose() {
-    printf 'mio sürüm: 40 (menü, ses, paketler, mio apt/pkg/install, dpkg updates kilidi, güvenli depo, dpkg-deb kancası)\n'
+    printf 'mio sürüm: 41 (menü, ses, paketler, mio apt/pkg/install, .so ELF DT_RUNPATH yaması, hız optimizasyonu, dpkg-deb kancası)\n'
     printf 'PREFIX: %s\n' "$PREFIX"
     printf 'HOME:   %s\n' "$HOME"
     app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
@@ -2562,7 +2606,12 @@ case "$COMMAND" in
         ;;
     -v|--version|version|surum|sürüm)
         app_version=$(sed -n '1s/^v//p' /data/data/com.mio/files/.mio-commands-version 2>/dev/null)
-        printf 'mio sürüm: 40 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        printf 'mio sürüm: 41 (uygulama: %s)\n' "${app_version:-bilinmiyor}"
+        exit 0
+        ;;
+    elf-fix|so-fix)
+        _ef=$(mio_repair_elf_libs)
+        printf 'mio: %s ELF/.so dosyası com.mio yollarına yamalandı.\n' "${_ef:-0}"
         exit 0
         ;;
     gui|panel|pencere)
@@ -2881,6 +2930,12 @@ case "$COMMAND" in
         elif [ -x "$PREFIX/bin/dpkg" ]; then
             printf '  dpkg: sarmalayıcı YOK, com.termux yolu olan paketler kurulamaz\n'
         fi
+
+        # 6b) Önceden kurulmuş ve *.so atlaması yüzünden com.termux DT_RUNPATH'li kalmış
+        #     ELF/.so kütüphanelerini (libpython3.14.so vb.) onar
+        _elf_fixed=$(mio_repair_elf_libs)
+        [ "${_elf_fixed:-0}" -gt 0 ] && printf '  ELF/.so kütüphaneleri onarıldı: %s dosya\n' "$_elf_fixed" \
+            || printf '  ELF/.so kütüphaneleri: tamam\n'
 
         # 7) AĞA ÇIKMADAN test: apt yöntemi + dpkg + indeks üretimi
         # önek dizinleri yazılabilir mi (paketler 0555 dizin bırakabiliyor)

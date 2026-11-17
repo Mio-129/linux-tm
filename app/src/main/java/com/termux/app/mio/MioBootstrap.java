@@ -73,6 +73,7 @@ public final class MioBootstrap {
 
         String installedVersion = readVersionFile();
         String currentVersion = getCurrentVersion(context);
+        repairUnpatchedElfsIfNeeded(currentVersion);
         boolean forceInstall = installedVersion == null || !installedVersion.equals(currentVersion) ||
             !areCommandsInstalled(binDir) || !areCommandsUpToDate(context, binDir);
 
@@ -470,10 +471,128 @@ public final class MioBootstrap {
         return repaired;
     }
 
+    /**
+     * Previously `.so` files were skipped by `mio_binary_like`, leaving DT_RUNPATH pointing to
+     * `/data/data/com.termux/files/usr/lib` inside libraries like `libpython3.14.so`. Scan
+     * `$PREFIX/{lib,bin,libexec}` once per app update (or when dpkg info changes) and patch any
+     * remaining ELF paths in-place using the equal-length `/data/data/com.mio///` replacement.
+     */
+    public static void repairUnpatchedElfsIfNeeded(@NonNull String currentVersion) {
+        File marker = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/.mio-elfs-checked");
+        File infoDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "var/lib/dpkg/info");
+        if (marker.isFile()) {
+            String prev = readText(marker);
+            if (prev != null && prev.trim().equals(currentVersion)) {
+                if (!infoDir.isDirectory() || infoDir.lastModified() <= marker.lastModified()) {
+                    return;
+                }
+            }
+        }
+
+        byte[] from;
+        byte[] to;
+        try {
+            from = "/data/data/com.termux".getBytes("UTF-8");
+            to = "/data/data/com.mio///".getBytes("UTF-8");
+        } catch (Exception e) {
+            return;
+        }
+        if (from.length != to.length) return;
+
+        int fixed = 0;
+        for (String sub : new String[]{"lib", "bin", "libexec"}) {
+            File dir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, sub);
+            if (dir.isDirectory()) {
+                fixed += repairElfDirectory(dir, from, to);
+            }
+        }
+        if (fixed > 0) {
+            Logger.logInfo(LOG_TAG, "Patched legacy com.termux paths in " + fixed + " ELF/shared-library files");
+        }
+        if (marker.getParentFile() != null && marker.getParentFile().isDirectory()) {
+            writeText(marker, currentVersion + "\n");
+        }
+    }
+
+    private static int repairElfDirectory(@NonNull File dir, @NonNull byte[] from, @NonNull byte[] to) {
+        if (isSymlink(dir)) return 0;
+        File[] children = dir.listFiles();
+        if (children == null) return 0;
+        int fixed = 0;
+        for (File child : children) {
+            if (isSymlink(child)) continue;
+            if (child.isDirectory()) {
+                fixed += repairElfDirectory(child, from, to);
+            } else if (child.isFile()) {
+                if (patchElfLegacyPath(child, from, to)) fixed++;
+            }
+        }
+        return fixed;
+    }
+
+    private static boolean patchElfLegacyPath(@NonNull File file, @NonNull byte[] from, @NonNull byte[] to) {
+        long size = file.length();
+        if (size < 16 || size > 32L * 1024 * 1024) return false;
+        if (!isElfFile(file)) return false;
+
+        byte[] data = readAllBytesQuietLimit(file, 32L * 1024 * 1024);
+        if (data == null) return false;
+        int pos = indexOfBytes(data, from, 0);
+        if (pos < 0) return false;
+
+        while (pos >= 0) {
+            System.arraycopy(to, 0, data, pos, to.length);
+            pos = indexOfBytes(data, from, pos + to.length);
+        }
+
+        boolean executable = file.canExecute();
+        if (!writeBytes(file, data)) return false;
+        if (executable) {
+            //noinspection ResultOfMethodCallIgnored
+            file.setExecutable(true, false);
+        }
+        return true;
+    }
+
+    private static boolean isElfFile(@NonNull File file) {
+        byte[] magic = new byte[4];
+        try (InputStream in = new FileInputStream(file)) {
+            int n = in.read(magic);
+            return n == 4 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isSymlink(@NonNull File file) {
+        try {
+            android.system.StructStat st = android.system.Os.lstat(file.getAbsolutePath());
+            return android.system.OsConstants.S_ISLNK(st.st_mode);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static int indexOfBytes(@NonNull byte[] haystack, @NonNull byte[] needle, int from) {
+        outer:
+        for (int i = Math.max(0, from); i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    }
+
     @Nullable
     private static byte[] readAllBytesQuiet(@NonNull File file) {
+        return readAllBytesQuietLimit(file, 8L * 1024 * 1024);
+    }
+
+    @Nullable
+    private static byte[] readAllBytesQuietLimit(@NonNull File file, long maxBytes) {
         long size = file.length();
-        if (size > 8L * 1024 * 1024) return null;
+        if (size > maxBytes) return null;
         byte[] buffer = new byte[(int) size];
         int offset = 0;
         try (InputStream in = new FileInputStream(file)) {
